@@ -316,9 +316,10 @@ class ImportPipeline(
     }
 
     /**
-     * Registers the proxy with the server and uploads it. A video that already left `created` needs nothing. An
-     * unfinished one is only continued while its presigned URL is still known and valid; otherwise it is deleted and
-     * created anew, because the contract has no endpoint to fetch a fresh URL for an existing video.
+     * Registers the proxy with the server, uploads it and then sends a court that exists only locally. A video that
+     * already left `created` needs at most that court. An unfinished one is only continued while its presigned URL is
+     * still known and valid; otherwise it is deleted and created anew, because the contract has no endpoint to fetch a
+     * fresh URL for an existing video.
      */
     private suspend fun uploadProxy(
         project: Project,
@@ -330,6 +331,8 @@ class ImportPipeline(
         val existing = project.remoteVideoId?.let { fetchVideo(it) }
         if (existing != null && existing.status != VideoStatus.CREATED) {
             remember(existing)
+            // A retry after a failed court upload lands here, because the proxy itself is already on the server.
+            sendLocalCourt(project.id, existing)
             return
         }
         val known = synchronized(lock) { targets[project.id] }
@@ -358,8 +361,24 @@ class ImportPipeline(
             target = created.upload
         }
         uploader.upload(target, proxy) { setProgress(project.id, Stage.UPLOADING, it) }
-        remember(api.uploadComplete(videoId))
+        val completed = api.uploadComplete(videoId)
+        remember(completed)
         synchronized(lock) { targets.remove(project.id) }
+        sendLocalCourt(project.id, completed)
+    }
+
+    /**
+     * Sends a court that was marked before the video was registered. The court screen only calls the server when the
+     * project already has a remote video id, so a court saved while the proxy was still transcoding or uploading
+     * exists only locally; the project is re-read because the court may have been saved during the upload.
+     */
+    private suspend fun sendLocalCourt(
+        projectId: String,
+        video: Video,
+    ) {
+        if (video.court != null) return
+        val court = store.get(projectId)?.court ?: return
+        remember(api.putCourt(video.id, court))
     }
 
     private fun stillValid(target: UploadTarget): Boolean =

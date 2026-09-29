@@ -58,6 +58,9 @@ class ImportPipelineTest {
     /** Makes `GET /v1/videos` answer 503, to show what the list looks like while the server is unreachable. */
     @Volatile private var videoListDown = false
 
+    /** Number of upcoming `PUT /v1/videos/v1/court` calls that answer 503 before the court is accepted. */
+    private val courtFailures = AtomicInteger()
+
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
     private val transcoder =
@@ -166,10 +169,18 @@ class ImportPipelineTest {
 
     private fun io.ktor.client.engine.mock.MockRequestHandleScope.routeAnalysis(path: String) =
         when (path) {
-            "/v1/videos/v1/court" -> {
-                videoCourt = """{"roi":{"x":0.1,"y":0.1,"width":0.5,"height":0.5},"netPoint":{"x":0.3,"y":0.3}}"""
-                respond(videoJson(), HttpStatusCode.OK, json)
-            }
+            "/v1/videos/v1/court" ->
+                if (courtFailures.getAndDecrement() > 0) {
+                    respond(
+                        """{"error":{"code":"unavailable","message":"court down"}}""",
+                        HttpStatusCode.ServiceUnavailable,
+                        json,
+                    )
+                } else {
+                    videoCourt =
+                        """{"roi":{"x":0.1,"y":0.1,"width":0.5,"height":0.5},"netPoint":{"x":0.3,"y":0.3}}"""
+                    respond(videoJson(), HttpStatusCode.OK, json)
+                }
             "/v1/videos/v1/analyze" -> {
                 videoStatus = "analyzing"
                 respond(jobJson("queued", 0.0), HttpStatusCode.Accepted, json)
@@ -296,6 +307,59 @@ class ImportPipelineTest {
             assertEquals(3, requests.count { it == "GET /v1/jobs/j1" })
             withTimeout(5_000) { while (analyzed.isEmpty()) kotlinx.coroutines.delay(10) }
             assertEquals("v1", analyzed.single().remoteVideoId)
+        }
+
+    @Test
+    fun aCourtSavedBeforeTheUploadIsSentAfterUploadCompleteAndBeforeAnalyze() =
+        runBlocking<Unit> {
+            transcoder.behavior = { output ->
+                store.setCourt("p1", court())
+                Files.write(output, ByteArray(100))
+            }
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+
+            // The analyze step would also send a missing court, so the court must be on the server before it starts.
+            assertEquals(
+                listOf("POST /v1/videos", "POST /v1/videos/v1/upload-complete", "PUT /v1/videos/v1/court"),
+                requests.toList(),
+            )
+
+            jobs += listOf("succeeded")
+            pipeline.startAnalysis("p1")
+            awaitRow { it.status == ProjectStatus.ANALYZED }
+
+            val order = requests.filter { it.startsWith("POST") || it.startsWith("PUT") }
+            assertEquals(
+                listOf(
+                    "POST /v1/videos",
+                    "POST /v1/videos/v1/upload-complete",
+                    "PUT /v1/videos/v1/court",
+                    "POST /v1/videos/v1/analyze",
+                ),
+                order,
+            )
+        }
+
+    @Test
+    fun aFailedCourtUploadAfterTheProxyIsRetriedWithoutUploadingTheProxyAgain() =
+        runBlocking<Unit> {
+            courtFailures.set(1)
+            transcoder.behavior = { output ->
+                store.setCourt("p1", court())
+                Files.write(output, ByteArray(100))
+            }
+            pipeline.import(listOf(original))
+            val failed = awaitRow { it.status == ProjectStatus.FAILED }
+            assertNotNull(failed.error)
+
+            pipeline.retry(failed.project.id)
+            awaitRow { it.status == ProjectStatus.READY }
+
+            assertEquals(1, createCount.get())
+            assertEquals(1, uploader.uploaded.get())
+            assertEquals(2, requests.count { it == "PUT /v1/videos/v1/court" })
+            assertEquals("PUT /v1/videos/v1/court", requests.last())
         }
 
     @Test

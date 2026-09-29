@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 
 test.describe('landing page', () => {
   test.beforeEach(async ({ page }) => {
+    // The download buttons upgrade once the latest GitHub release has loaded, so a live request would make
+    // the snapshot depend on whether a release exists and on whether it resolves before the screenshot.
+    // Answering 404 pins the page to its releases-link fallback and keeps CI off the rate-limited API.
+    await page.route('https://api.github.com/**', (route) => route.fulfill({ status: 404, body: '{}' }));
     await page.goto('/');
     await page.evaluate(() => document.fonts.ready);
   });

@@ -98,13 +98,16 @@ describe('job routes', () => {
     return { videoId, jobId: response.json<JobBody>().id, auth: user.auth };
   }
 
-  /** Posts as `worker-1`, the worker `claim()` uses by default, unless the payload names another `workerId`. */
+  /**
+   * Posts as `worker-1` in its first attempt, the claim `claim()` makes by default on a fresh job, unless the payload
+   * names another `workerId` or `attempt`.
+   */
   async function post(url: string, payload: object) {
     return app.inject({
       method: 'POST',
       url,
       headers: INTERNAL,
-      payload: { workerId: 'worker-1', ...payload },
+      payload: { workerId: 'worker-1', attempt: 1, ...payload },
     });
   }
 
@@ -490,14 +493,51 @@ describe('job routes', () => {
       expect(sets).toHaveLength(0);
 
       expect(
-        (await post(`/internal/jobs/${jobId}/result`, { ...body, workerId: 'worker-2' })).statusCode,
+        (await post(`/internal/jobs/${jobId}/result`, { ...body, workerId: 'worker-2', attempt: 2 }))
+          .statusCode,
       ).toBe(204);
+    });
+
+    it('rejects reports of an earlier attempt when the same workerId re-claims the job', async () => {
+      await clearJobs();
+      const { jobId } = await queuedJob();
+      expect((await claim('worker-1')).statusCode).toBe(200);
+      await app.db
+        .updateTable('jobs')
+        .set({ lease_expires_at: new Date(Date.now() - 1000) })
+        .where('id', '=', jobId)
+        .execute();
+      const again = await claim('worker-1');
+      expect(again.json<ClaimBody>().job.attempts).toBe(2);
+
+      expect((await post(`/internal/jobs/${jobId}/progress`, { progress: 0.9 })).statusCode).toBe(409);
+      expect(
+        (await post(`/internal/jobs/${jobId}/fail`, { error: 'late', retryable: false })).statusCode,
+      ).toBe(409);
+      expect(
+        (await post(`/internal/jobs/${jobId}/result`, { modelVersion: 'm', segments: [], scores: null }))
+          .statusCode,
+      ).toBe(409);
+      const job = await app.db
+        .selectFrom('jobs')
+        .selectAll()
+        .where('id', '=', jobId)
+        .executeTakeFirstOrThrow();
+      expect(job).toMatchObject({ status: 'running', worker_id: 'worker-1', attempts: 2, progress: 0 });
+
+      expect((await post(`/internal/jobs/${jobId}/progress`, { attempt: 2, progress: 0.5 })).statusCode).toBe(
+        204,
+      );
     });
 
     it('rejects progress and failure reports from the stale worker without side effects', async () => {
       const { jobId } = await takeOver();
 
       expect((await post(`/internal/jobs/${jobId}/progress`, { progress: 0.9 })).statusCode).toBe(409);
+      // The current attempt alone is not enough: the report must also come from the worker holding the lease.
+      expect((await post(`/internal/jobs/${jobId}/progress`, { attempt: 2, progress: 0.9 })).statusCode).toBe(
+        409,
+      );
       expect(
         (await post(`/internal/jobs/${jobId}/fail`, { error: 'late', retryable: false })).statusCode,
       ).toBe(409);
@@ -510,7 +550,7 @@ describe('job routes', () => {
       expect(job).toMatchObject({ status: 'running', worker_id: 'worker-2', progress: 0, error: null });
     });
 
-    it('requires a workerId on progress, result and fail', async () => {
+    it('requires a workerId and an attempt on progress, result and fail', async () => {
       await clearJobs();
       const { jobId } = await queuedJob();
       await claim();
@@ -520,13 +560,20 @@ describe('job routes', () => {
         ['fail', { error: 'x', retryable: false }],
       ] as const;
       for (const [action, payload] of bodies) {
-        const response = await app.inject({
-          method: 'POST',
-          url: `/internal/jobs/${jobId}/${action}`,
-          headers: INTERNAL,
-          payload,
-        });
-        expect(response.statusCode, action).toBe(400);
+        for (const missing of ['workerId', 'attempt']) {
+          const complete = Object.fromEntries(
+            Object.entries({ workerId: 'worker-1', attempt: 1, ...payload }).filter(
+              ([key]) => key !== missing,
+            ),
+          );
+          const response = await app.inject({
+            method: 'POST',
+            url: `/internal/jobs/${jobId}/${action}`,
+            headers: INTERNAL,
+            payload: complete,
+          });
+          expect(response.statusCode, `${action} without ${missing}`).toBe(400);
+        }
       }
     });
   });
@@ -578,7 +625,7 @@ describe('job routes', () => {
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         const claimed = await claim();
         expect(claimed.json<ClaimBody>().job.attempts).toBe(attempt);
-        await post(`/internal/jobs/${jobId}/fail`, { error: 'flaky', retryable: true });
+        await post(`/internal/jobs/${jobId}/fail`, { attempt, error: 'flaky', retryable: true });
       }
       const job = await app.db
         .selectFrom('jobs')

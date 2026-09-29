@@ -85,17 +85,20 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 | Method & path | Body | Response |
 |---|---|---|
 | `POST /internal/jobs/claim` | `{ workerId }` | `200 { job, video, proxyUrl }` or `204` when queue empty. Claims oldest `queued` job (or a `running` job whose lease expired), sets `running`, increments `attempts`, lease 10 min. |
-| `POST /internal/jobs/:id/progress` | `{ workerId, progress }` | `204`, extends lease |
-| `POST /internal/jobs/:id/result` | `{ workerId, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
-| `POST /internal/jobs/:id/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
+| `POST /internal/jobs/:id/progress` | `{ workerId, attempt, progress }` | `204`, extends lease |
+| `POST /internal/jobs/:id/result` | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
+| `POST /internal/jobs/:id/fail` | `{ workerId, attempt, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
 | `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts. |
 | `POST /internal/videos/:id/court-suggestion` | `CourtSuggestion` or JSON `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running` |
 | `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or is leased to another worker |
 
-`progress`, `result` and `fail` carry the `workerId` that was sent to `claim`. If the job is not `running` or its
-`worker_id` differs (the lease expired and another worker re-claimed the job), the API answers `409` and changes
-nothing. The worker treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on
-`progress` also aborts the model run early.
+`progress`, `result` and `fail` carry the `workerId` that was sent to `claim` and the `attempt` (a positive integer),
+which is the `job.attempts` value the claim response returned. If the job is not `running`, its `worker_id` differs
+or its `attempts` differs from `attempt` (the lease expired and the job was re-claimed, by another worker or by the
+same `workerId`), the API answers `409` and changes nothing. The attempt makes the check exact even when two workers
+share a `workerId`. A missing `workerId` or `attempt` is a `400`. Court detection does not use `attempt`. The worker
+treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on `progress` also aborts the
+model run early.
 
 For court detection only the failure report carries the `workerId`: a result from a worker whose lease expired is
 still a valid detection of the same proxy, so it is accepted while the task is `running`, whereas a stale failure

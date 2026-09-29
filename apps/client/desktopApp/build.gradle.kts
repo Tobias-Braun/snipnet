@@ -82,6 +82,11 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Snipnet"
             packageVersion = installerVersion
+            // jlink only bundles java.base, java.desktop, java.logging and jdk.crypto.ec by default. The SQLite store
+            // (sqlite-jdbc) needs java.sql, and JavaCPP/coroutines use jdk.unsupported, java.management and
+            // java.instrument; without them the installed app fails as soon as it opens its database. The list is
+            // what `./gradlew :desktopApp:suggestRuntimeModules` reports; rerun it after adding dependencies.
+            modules("java.instrument", "java.management", "java.sql", "jdk.unsupported")
             // Installers are unsigned for now; signing and notarization are tracked separately.
             macOS {
                 iconFile.set(project.file("packaging/icon.icns"))

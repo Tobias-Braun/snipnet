@@ -37,7 +37,7 @@ jobs:
       # Each runner builds its own installer, so only the natives of that platform are bundled. The tag (v1.2.3)
       # becomes the installer version; the build script strips the prefix and any pre-release suffix.
       - run: ./gradlew :desktopApp:${{ matrix.task }} -PappVersion="$GITHUB_REF_NAME" --stacktrace
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: installer-${{ matrix.os }}
           path: apps/client/desktopApp/build/compose/binaries/main/${{ matrix.pattern }}
@@ -49,7 +49,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: installers
           pattern: installer-*

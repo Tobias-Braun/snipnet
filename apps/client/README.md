@@ -96,6 +96,10 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 # output: desktopApp/build/compose/binaries/main/{dmg,msi,deb}/
 ```
 
+The bundled Java runtime only contains the JDK modules listed in `modules(...)`. After adding a dependency, run
+`./gradlew :desktopApp:suggestRuntimeModules` and extend the list; a missing module (for example `java.sql` for the
+SQLite store) only shows up as a crash of the installed app, not in `run` or the tests.
+
 Homebrew's JDK is refused by the Compose packaging check locally; use another vendor's JDK (Temurin, Corretto) or
 pass `-Pcompose.desktop.packaging.checkJdkVendor=false`.
 

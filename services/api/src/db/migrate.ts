@@ -37,7 +37,15 @@ export interface MigrationLogger {
  * lock, so several API instances starting at once is safe. Throws when a migration fails, which aborts startup.
  */
 export async function runMigrations(db: Kysely<Database>, logger?: MigrationLogger): Promise<void> {
-  const migrator = new Migrator({ db, provider: sqlFileProvider });
+  // Kysely finds its bookkeeping tables by name across all schemas unless told which one to use, so a migration
+  // table of another schema (parallel test files each work in their own schema) would be mistaken for ours.
+  const { rows } = await sql<{ schema: string }>`select current_schema() as schema`.execute(db);
+  const schema = rows[0]?.schema;
+  const migrator = new Migrator({
+    db,
+    provider: sqlFileProvider,
+    ...(schema === undefined ? {} : { migrationTableSchema: schema }),
+  });
   const { error, results } = await migrator.migrateToLatest();
 
   for (const result of results ?? []) {

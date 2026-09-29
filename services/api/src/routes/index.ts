@@ -1,5 +1,6 @@
 import type { FastifyPluginCallback } from 'fastify';
 
+import { authRoutes } from './auth.js';
 import { healthRoutes } from './health.js';
 
 /**
@@ -8,5 +9,6 @@ import { healthRoutes } from './health.js';
  */
 export const v1Routes: FastifyPluginCallback<{ version: string }> = (app, options, done) => {
   void app.register(healthRoutes, { version: options.version });
+  void app.register(authRoutes);
   done();
 };

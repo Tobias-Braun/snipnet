@@ -76,7 +76,8 @@ object ProjectFiles {
 
     /**
      * CMX3600 EDL with one cut event per range on the auxiliary reel `AX`, audio and video together. Source
-     * timecodes continue from the timecode embedded in the file (00:00:00:00 when it has none), the record side starts at 01:00:00:00 and runs without gaps.
+     * timecodes continue from the timecode embedded in the file (00:00:00:00 when it has none), the record side
+     * starts at 01:00:00:00 and runs without gaps.
      * Timecodes count the nominal frame rate without drop frames.
      */
     fun edl(

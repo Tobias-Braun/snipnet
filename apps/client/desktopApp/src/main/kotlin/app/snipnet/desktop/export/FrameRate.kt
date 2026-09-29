@@ -45,7 +45,7 @@ data class FrameRate(
         val minutes = h.toLong() * 60 + m.toLong()
         val nominalFrames = (minutes * 60 + s.toLong()) * fps + frame
         if (separator != ";" || denominator != 1001 || fps % 30 != 0) return nominalFrames
-        // Drop frame skips frame numbers 0 until drop at every minute except each tenth one.
+        // Drop frame skips the first `drop` frame numbers of every minute except each tenth one.
         val drop = fps / 15
         return nominalFrames - drop * (minutes - minutes / 10)
     }

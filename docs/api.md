@@ -106,6 +106,14 @@ a `Content-Length` equal to `proxySizeBytes`; the storage rejects anything else 
 `POST /v1/videos/:id/upload-complete` verifies the object and its size (`409` otherwise) and is idempotent.
 A malformed video id is treated like an unknown one (`404`).
 
+The first successful `upload-complete` records the object's ETag. The upload URL stays valid for its hour even
+after that, so when a worker claims a job (`POST /internal/jobs/claim`) the API compares the stored object with the
+recorded ETag; if the proxy was overwritten or removed in the meantime, the job and the video are set to `failed`
+(job `error`: the proxy was changed or removed after the upload was confirmed) and the claim moves on to the next
+job. The client re-uploads by creating a new video. An overwrite after the claim is not detected. If the object
+store cannot be reached during that check, the claim answers `500` and leaves the job as it was, without spending
+an attempt.
+
 `DELETE /v1/videos/:id` is refused with `409` while the video has a `queued` or `running` job, so a worker never
 loses its video mid-analysis; there is no cancel, the client retries once the job has succeeded or failed. The
 check runs under the video's row lock, so it cannot race with `analyze`. Should a job vanish anyway, the

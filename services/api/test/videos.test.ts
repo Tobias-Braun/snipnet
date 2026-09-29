@@ -1,5 +1,5 @@
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import { createDb } from '../src/db/client.js';
@@ -276,6 +276,104 @@ describe('video routes', () => {
       });
 
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('proxy replaced through the upload URL after upload-complete', () => {
+    const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
+
+    /** Uploads and confirms a proxy, then queues a job for it directly, as `analyze` would. */
+    async function confirmedVideoWithJob(size: number) {
+      const user = await newUser();
+      const { video, upload } = await createVideo(user.auth, size);
+      expect((await uploadProxy(upload, new Uint8Array(size).fill(1))).status).toBe(200);
+      const complete = await app.inject({
+        method: 'POST',
+        url: `/v1/videos/${video.id}/upload-complete`,
+        headers: user.auth,
+      });
+      expect(complete.statusCode).toBe(200);
+      await app.db.deleteFrom('jobs').execute();
+      await app.db.insertInto('jobs').values({ video_id: video.id }).execute();
+      return { user, video, upload };
+    }
+
+    const claim = () =>
+      app.inject({
+        method: 'POST',
+        url: '/internal/jobs/claim',
+        headers: INTERNAL,
+        payload: { workerId: 'w' },
+      });
+
+    it('hands out the job while the proxy is unchanged', async () => {
+      const { video } = await confirmedVideoWithJob(64);
+
+      const response = await claim();
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json<{ video: { id: string } }>().video.id).toBe(video.id);
+    });
+
+    it('fails the job and the video instead of handing out an overwritten proxy', async () => {
+      const { user, video, upload } = await confirmedVideoWithJob(64);
+      // Same size and content type, so the still-valid presigned URL accepts it.
+      expect((await uploadProxy(upload, new Uint8Array(64).fill(2))).status).toBe(200);
+
+      const response = await claim();
+
+      expect(response.statusCode).toBe(204);
+      const job = await app.db
+        .selectFrom('jobs')
+        .select(['status', 'error'])
+        .where('video_id', '=', video.id)
+        .executeTakeFirstOrThrow();
+      expect(job).toEqual({ status: 'failed', error: expect.stringContaining('changed') as string });
+      const after = await app.inject({ method: 'GET', url: `/v1/videos/${video.id}`, headers: user.auth });
+      expect(after.json<VideoBody>().status).toBe('failed');
+    });
+
+    it('does not adopt the new object when upload-complete is repeated', async () => {
+      const { user, video, upload } = await confirmedVideoWithJob(64);
+      await uploadProxy(upload, new Uint8Array(64).fill(2));
+      await app.inject({ method: 'POST', url: `/v1/videos/${video.id}/upload-complete`, headers: user.auth });
+
+      expect((await claim()).statusCode).toBe(204);
+    });
+
+    it('fails the job when the proxy has been removed', async () => {
+      const { user, video } = await confirmedVideoWithJob(64);
+      await app.storage.deleteObject(`proxies/${user.id}/${video.id}.mp4`);
+
+      expect((await claim()).statusCode).toBe(204);
+      const row = await app.db
+        .selectFrom('videos')
+        .select('status')
+        .where('id', '=', video.id)
+        .executeTakeFirstOrThrow();
+      expect(row.status).toBe('failed');
+    });
+
+    it('leaves the job untouched when the object store cannot be reached', async () => {
+      const { video } = await confirmedVideoWithJob(64);
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo').mockRejectedValueOnce(new Error('storage down'));
+
+      try {
+        expect((await claim()).statusCode).toBe(500);
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      // The failed claim spent no attempt, so the job is handed out normally once the store is back.
+      const job = await app.db
+        .selectFrom('jobs')
+        .select(['status', 'attempts', 'worker_id'])
+        .where('video_id', '=', video.id)
+        .executeTakeFirstOrThrow();
+      expect(job).toEqual({ status: 'queued', attempts: 0, worker_id: null });
+      const retry = await claim();
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json<{ job: { attempts: number } }>().job.attempts).toBe(1);
     });
   });
 

@@ -261,20 +261,22 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
     async (request) => {
       const video = await findOwnedVideo(request.user.sub, request.params.id);
 
-      const size = await app.storage.objectSize(video.object_key);
-      if (size === null) throw new AppError('conflict', 'The proxy has not been uploaded');
-      if (size !== video.proxy_size_bytes) {
+      const object = await app.storage.objectInfo(video.object_key);
+      if (object === null) throw new AppError('conflict', 'The proxy has not been uploaded');
+      if (object.sizeBytes !== video.proxy_size_bytes) {
         throw new AppError(
           'conflict',
-          `The uploaded proxy has ${String(size)} bytes but ${String(video.proxy_size_bytes)} were announced`,
+          `The uploaded proxy has ${String(object.sizeBytes)} bytes but ${String(video.proxy_size_bytes)} were announced`,
         );
       }
 
       // Only a freshly created video moves to `uploaded`; a repeated call (or one after analysis started) is a
-      // no-op that must not throw the video back in its lifecycle.
+      // no-op that must not throw the video back in its lifecycle. The ETag is pinned by that first call only:
+      // the presigned upload URL stays valid for an hour, so a later overwrite has to be detected by the worker
+      // claim against this value instead of being adopted by a repeated call.
       const updated = await app.db
         .updateTable('videos')
-        .set({ status: 'uploaded', updated_at: new Date() })
+        .set({ status: 'uploaded', proxy_etag: object.etag, updated_at: new Date() })
         .where('id', '=', video.id)
         .where('status', '=', 'created')
         .returningAll()

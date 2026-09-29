@@ -20,6 +20,8 @@ export const LEASE_MINUTES = 10;
 /** Scores of long videos are large: a 3 hour match at 15 Hz is around a million characters of JSON. */
 const RESULT_BODY_LIMIT = 16 * 1024 * 1024;
 
+const PROXY_CHANGED_MESSAGE = 'The proxy was changed or removed after the upload was confirmed';
+
 const JobParams = Type.Object({ id: Type.String() });
 
 const Unit = Type.Number({ minimum: 0, maximum: 1 });
@@ -90,6 +92,10 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
    * Picks the oldest claimable job with `FOR UPDATE SKIP LOCKED`, so parallel workers each lock a different row
    * instead of waiting for or double-claiming one. A running job whose lease has expired counts as claimable
    * (its worker died); if it has already used all attempts it is failed instead and the next candidate is tried.
+   * A candidate whose proxy was replaced after `upload-complete` (the presigned PUT URL outlives it) or removed is
+   * not what the client confirmed, so it fails for good as well. That check runs inside the transaction: when the
+   * object store cannot be reached, the error rolls the claim back instead of leaving a running job whose attempt
+   * is spent although no worker ever received it.
    */
   async function claimNext(
     workerId: string,
@@ -122,6 +128,16 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           continue;
         }
 
+        const video = await trx
+          .selectFrom('videos')
+          .selectAll()
+          .where('id', '=', candidate.video_id)
+          .executeTakeFirstOrThrow();
+        if (!(await proxyIsUnchanged(video))) {
+          await failPermanently(trx, candidate, PROXY_CHANGED_MESSAGE);
+          continue;
+        }
+
         const job = await trx
           .updateTable('jobs')
           .set({
@@ -136,14 +152,16 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           .where('id', '=', candidate.id)
           .returningAll()
           .executeTakeFirstOrThrow();
-        const video = await trx
-          .selectFrom('videos')
-          .selectAll()
-          .where('id', '=', job.video_id)
-          .executeTakeFirstOrThrow();
         return { job, video };
       }
     });
+  }
+
+  /** Whether the stored proxy still has the ETag recorded at upload-complete. Videos without one are not checked. */
+  async function proxyIsUnchanged(video: Selectable<VideosTable>): Promise<boolean> {
+    if (video.proxy_etag === null) return true;
+    const object = await app.storage.objectInfo(video.object_key);
+    return object?.etag === video.proxy_etag;
   }
 
   app.post(

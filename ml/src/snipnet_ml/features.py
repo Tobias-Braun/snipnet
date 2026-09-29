@@ -325,8 +325,8 @@ def compute_features(path: str | Path, roi: Roi, config: FeatureConfig | None = 
     except ValueError as error:
         raise ValueError(f"{error} from {path}") from error
     samples = decode_audio(path, config.sample_rate)
-    content_end = max(motion.last_frame_time + 1.0 / config.fps, len(samples) / config.sample_rate)
-    duration = bounded_duration(path, content_end)
+    # Only the video bounds the duration: the audio track may run a little past the last frame (encoder padding).
+    duration = bounded_duration(path, motion.last_frame_time + 1.0 / config.fps)
     n_windows = max(1, math.ceil(duration / config.window_s - 1e-9))
 
     roi_motion = _window_mean(motion.roi, motion.times, config.window_s, n_windows)

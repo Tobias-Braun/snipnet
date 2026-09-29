@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
-import { gsap } from 'gsap';
+
+import { loadGsap, motionAllowed, MOTION_QUERY } from '../loadGsap.ts';
 
 /**
  * One piece of the recording. `rally` pieces become the kept clips, the others are dead time that the cut
@@ -42,35 +43,45 @@ export function FilmstripHero() {
     const element = root.current;
     if (!element) return;
 
-    const media = gsap.matchMedia();
-    media.add('(prefers-reduced-motion: no-preference)', () => {
-      const select = gsap.utils.selector(element);
-      const rallies = select('.strip-piece.rally');
-      const dead = select('.strip-piece.dead');
-      const cuts = select('.strip-cut');
-      const playhead = select('.strip-playhead');
+    if (!motionAllowed()) return;
 
-      const timeline = gsap.timeline({ defaults: { ease: 'power2.out' }, repeat: -1, repeatDelay: 2.4 });
-      timeline
-        .fromTo(playhead, { x: 0, opacity: 1 }, { x: 960, duration: 2.6, ease: 'none' }, 0.3)
-        .fromTo(rallies, { fill: RAW_COLOR }, { fill: RALLY_COLOR, duration: 0.3, stagger: 0.85 }, 0.6)
-        .fromTo(
-          cuts,
-          { scaleY: 0, opacity: 0, transformOrigin: '50% 0%' },
-          { scaleY: 1, opacity: 1, duration: 0.3, stagger: 0.12 },
-          2.9,
-        )
-        .to(playhead, { opacity: 0, duration: 0.2 }, 2.9)
-        .fromTo(dead, { y: 0, opacity: 1 }, { y: 34, opacity: 0.18, duration: 0.6, stagger: 0.1 }, 3.5)
-        .fromTo(rallies, { y: 0 }, { y: -10, duration: 0.5, stagger: 0.1 }, 3.6);
+    let disposed = false;
+    let revert: (() => void) | undefined;
 
-      return () => {
-        timeline.kill();
-      };
+    void loadGsap().then((gsap) => {
+      if (disposed) return;
+      const media = gsap.matchMedia();
+      revert = () => media.revert();
+      media.add(MOTION_QUERY, () => {
+        const select = gsap.utils.selector(element);
+        const rallies = select('.strip-piece.rally');
+        const dead = select('.strip-piece.dead');
+        const cuts = select('.strip-cut');
+        const playhead = select('.strip-playhead');
+
+        const timeline = gsap.timeline({ defaults: { ease: 'power2.out' }, repeat: -1, repeatDelay: 2.4 });
+        timeline
+          .fromTo(playhead, { x: 0, opacity: 1 }, { x: 960, duration: 2.6, ease: 'none' }, 0.3)
+          .fromTo(rallies, { fill: RAW_COLOR }, { fill: RALLY_COLOR, duration: 0.3, stagger: 0.85 }, 0.6)
+          .fromTo(
+            cuts,
+            { scaleY: 0, opacity: 0, transformOrigin: '50% 0%' },
+            { scaleY: 1, opacity: 1, duration: 0.3, stagger: 0.12 },
+            2.9,
+          )
+          .to(playhead, { opacity: 0, duration: 0.2 }, 2.9)
+          .fromTo(dead, { y: 0, opacity: 1 }, { y: 34, opacity: 0.18, duration: 0.6, stagger: 0.1 }, 3.5)
+          .fromTo(rallies, { y: 0 }, { y: -10, duration: 0.5, stagger: 0.1 }, 3.6);
+
+        return () => {
+          timeline.kill();
+        };
+      });
     });
 
     return () => {
-      media.revert();
+      disposed = true;
+      revert?.();
     };
   }, []);
 

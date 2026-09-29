@@ -83,7 +83,7 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 
 `progress`, `result` and `fail` carry the `workerId` that was sent to `claim`. If the job is not `running` or its
 `worker_id` differs (the lease expired and another worker re-claimed the job), the API answers `409` and changes
-nothing; the worker drops the job.
+nothing. The worker treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on `progress` also aborts the model run early.
 
 ## Court suggestion (proposal)
 

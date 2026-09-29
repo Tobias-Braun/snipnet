@@ -63,6 +63,17 @@ dependencies {
     testImplementation(libs.ktor.client.mock)
 }
 
+/**
+ * Version of the installers, taken from the git tag: the release workflow passes `-PappVersion=<tag>` (for example
+ * `v1.2.3`). jpackage only accepts numeric `MAJOR.MINOR.PATCH`, so the leading `v` and any pre-release suffix such
+ * as `-rc.1` are dropped. Local builds without the property use `1.0.0`.
+ */
+val installerVersion: String =
+    providers.gradleProperty("appVersion").orNull?.let { tag ->
+        Regex("""^v?(\d+\.\d+\.\d+)""").find(tag)?.groupValues?.get(1)
+            ?: throw GradleException("appVersion '$tag' must look like v1.2.3")
+    } ?: "1.0.0"
+
 compose.desktop {
     application {
         mainClass = "app.snipnet.desktop.MainKt"
@@ -70,7 +81,27 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Snipnet"
-            packageVersion = "1.0.0"
+            packageVersion = installerVersion
+            // jlink only bundles java.base, java.desktop, java.logging and jdk.crypto.ec by default. The SQLite store
+            // (sqlite-jdbc) needs java.sql, and JavaCPP/coroutines use jdk.unsupported, java.management and
+            // java.instrument; without them the installed app fails as soon as it opens its database. The list is
+            // what `./gradlew :desktopApp:suggestRuntimeModules` reports; rerun it after adding dependencies.
+            modules("java.instrument", "java.management", "java.sql", "jdk.unsupported")
+            // Installers are unsigned for now; signing and notarization are tracked separately.
+            macOS {
+                iconFile.set(project.file("packaging/icon.icns"))
+                // jpackage rejects a macOS app whose major version is 0, so 0.x tags are packaged as 1.x there.
+                packageVersion = installerVersion.replace(Regex("^0\\."), "1.")
+            }
+            windows {
+                iconFile.set(project.file("packaging/icon.ico"))
+                menuGroup = "Snipnet"
+                // Fixed so that installing a newer version upgrades the previous one instead of installing beside it.
+                upgradeUuid = "6f4d1c2e-8a3b-4f57-9d0e-5b7a2c91e348"
+            }
+            linux {
+                iconFile.set(project.file("packaging/icon.png"))
+            }
         }
     }
 }

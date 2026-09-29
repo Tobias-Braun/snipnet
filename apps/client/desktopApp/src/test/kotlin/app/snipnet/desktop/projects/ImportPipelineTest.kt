@@ -68,6 +68,9 @@ class ImportPipelineTest {
     @Volatile private var createGate: CompletableDeferred<Unit>? = null
     private val createStarted = CompletableDeferred<Unit>()
 
+    /** Number of upcoming `DELETE /v1/videos/v1` calls that answer 409, as the server does during a job. */
+    private val deleteConflicts = AtomicInteger()
+
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
     private val transcoder =
@@ -174,7 +177,16 @@ class ImportPipelineTest {
                     videoStatus = "uploaded"
                     respond(videoJson(), HttpStatusCode.OK, json)
                 }
-                path == "/v1/videos/v1" && request.method == HttpMethod.Delete -> respond("", HttpStatusCode.NoContent)
+                path == "/v1/videos/v1" && request.method == HttpMethod.Delete ->
+                    if (deleteConflicts.getAndDecrement() > 0) {
+                        respond(
+                            """{"error":{"code":"conflict","message":"job running"}}""",
+                            HttpStatusCode.Conflict,
+                            json,
+                        )
+                    } else {
+                        respond("", HttpStatusCode.NoContent)
+                    }
                 path == "/v1/videos/v1" -> respond(videoJson(), HttpStatusCode.OK, json)
                 else -> routeAnalysis(path)
             }
@@ -322,6 +334,38 @@ class ImportPipelineTest {
             assertTrue(pipeline.rows.value.isEmpty())
             assertEquals(0, uploader.uploaded.get())
             assertTrue("POST /v1/videos/v1/upload-complete" !in requests)
+        }
+
+    @Test
+    fun aProjectWhoseAnalysisIsRunningCannotBeRemoved() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            store.setCourt("p1", court())
+            jobs += List(200) { "running" }
+            pipeline.startAnalysis("p1")
+            val row = awaitRow { it.status == ProjectStatus.ANALYZING }
+            assertEquals(false, row.removable)
+
+            assertEquals(false, pipeline.remove("p1"))
+
+            assertEquals(1, store.list().size)
+            assertTrue("DELETE /v1/videos/v1" !in requests)
+        }
+
+    @Test
+    fun aRemovalThatTheServerAnswersWith409IsRetriedUntilItSucceeds() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteConflicts.set(2)
+
+            assertTrue(pipeline.remove("p1"))
+
+            withTimeout(10_000) {
+                while (requests.count { it == "DELETE /v1/videos/v1" } < 3) kotlinx.coroutines.delay(10)
+            }
+            assertTrue(store.list().isEmpty())
         }
 
     @Test

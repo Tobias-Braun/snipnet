@@ -57,7 +57,7 @@ class ProjectsStateHolder(
 
     fun cancel(projectId: String) = pipeline.cancel(projectId)
 
-    fun remove(projectId: String) = pipeline.remove(projectId)
+    fun remove(projectId: String): Boolean = pipeline.remove(projectId)
 
     fun analyze(projectId: String) = pipeline.startAnalysis(projectId)
 

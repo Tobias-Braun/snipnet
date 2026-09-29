@@ -178,9 +178,20 @@ class ImportPipeline(
         synchronized(lock) { jobs[projectId] }?.cancel()
     }
 
-    /** Deletes the project locally, its proxy file, and (best effort) the server's video. The original is kept. */
-    fun remove(projectId: String) {
-        val project = store.get(projectId) ?: return
+    /**
+     * Deletes the project locally, its proxy file, and (best effort) the server's video. The original is kept.
+     *
+     * The server refuses to delete a video with a queued or running job (409). Once the local project is gone its
+     * remote id is gone too, so a video removed while it is analyzing would stay on the server for good. Such a
+     * project is therefore not removed: this returns false and the project stays until the analysis ended. A 409
+     * that still arrives, because the local view of the job was stale, is retried in the background.
+     *
+     * @return whether the project was removed.
+     */
+    fun remove(projectId: String): Boolean {
+        val project = store.get(projectId) ?: return true
+        val busy = mutableRows.value.firstOrNull { it.project.id == projectId }?.removable == false
+        if (busy) return false
         synchronized(lock) {
             jobs.remove(projectId)?.cancel()
             tasks.remove(projectId)
@@ -190,13 +201,23 @@ class ImportPipeline(
         project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
         store.delete(projectId)
         publish()
-        project.remoteVideoId?.let { remoteId ->
-            scope.launch {
-                try {
-                    api.deleteVideo(remoteId)
-                } catch (e: ApiError) {
-                    // Already gone or unreachable: the local project is removed either way.
-                }
+        project.remoteVideoId?.let { remoteId -> scope.launch { deleteRemoteWithRetry(remoteId) } }
+        return true
+    }
+
+    /** Deletes the server video; while a job still holds it (409) the delete is repeated a bounded number of times. */
+    private suspend fun deleteRemoteWithRetry(remoteId: String) {
+        var attempt = 0
+        while (true) {
+            try {
+                api.deleteVideo(remoteId)
+                return
+            } catch (e: ApiError.Conflict) {
+                if (++attempt >= MAX_DELETE_ATTEMPTS) return
+                delay(maxPollIntervalMs)
+            } catch (e: ApiError) {
+                // Already gone or unreachable: the local project is removed either way.
+                return
             }
         }
     }
@@ -550,6 +571,7 @@ class ImportPipeline(
         private const val MIN_PROGRESS_STEP = 0.01
         private const val URL_SAFETY_MARGIN_S = 60L
         private const val MAX_POLL_FAILURES = 5
+        private const val MAX_DELETE_ATTEMPTS = 30
 
         /**
          * The wait before the next job poll: back to [base] whenever progress moved, otherwise one and a half times

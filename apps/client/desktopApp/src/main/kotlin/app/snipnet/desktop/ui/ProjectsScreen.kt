@@ -207,7 +207,7 @@ private fun ProjectActions(
     }
     if (row.cancellable) TextButton(onClick = { holder.cancel(row.project.id) }) { Text("Cancel") }
     if (row.status != ProjectStatus.PROXY && row.status != ProjectStatus.UPLOADING) {
-        TextButton(onClick = { holder.remove(row.project.id) }) { Text("Remove") }
+        TextButton(onClick = { holder.remove(row.project.id) }, enabled = row.removable) { Text("Remove") }
     }
 }
 

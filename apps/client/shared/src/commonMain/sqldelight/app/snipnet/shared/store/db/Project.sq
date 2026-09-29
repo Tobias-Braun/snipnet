@@ -26,6 +26,20 @@ CREATE TABLE pending_video_delete (
     PRIMARY KEY (user_id, remote_video_id)
 );
 
+-- Server videos of purged ownerless projects whose owner is not known yet (see migration 4).
+CREATE TABLE purged_remote_video (
+    remote_video_id TEXT NOT NULL PRIMARY KEY
+);
+
+insertPurgedRemoteVideo:
+INSERT OR IGNORE INTO purged_remote_video(remote_video_id) VALUES (?);
+
+selectPurgedRemoteVideos:
+SELECT remote_video_id FROM purged_remote_video;
+
+deletePurgedRemoteVideo:
+DELETE FROM purged_remote_video WHERE remote_video_id = ?;
+
 insertPendingVideoDelete:
 INSERT OR IGNORE INTO pending_video_delete(user_id, remote_video_id) VALUES (?, ?);
 

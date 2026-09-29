@@ -77,7 +77,8 @@ class ImportPipeline(
 
     /**
      * Analyses requested while the import was still running, mapped to their `openWhenDone` flag. The import task
-     * picks them up once its upload succeeded; failure, cancellation, [remove] and [reset] drop them.
+     * picks them up once its upload succeeded (or [finishTask] does, see there); failure, cancellation, [remove] and
+     * [reset] drop them.
      */
     private val pendingAnalyses = mutableMapOf<String, Boolean>()
 
@@ -254,20 +255,29 @@ class ImportPipeline(
         }
     }
 
-    /** Ignores a task that was replaced or removed meanwhile ([reset], [remove]) so it cannot resurrect stale state. */
+    /**
+     * Ignores a task that was replaced or removed meanwhile ([reset], [remove]) so it cannot resurrect stale state.
+     *
+     * A queued analysis is always taken out here. Usually [importUploadAndAnalyze] consumed it already, but a
+     * [startAnalysis] from another thread can still queue one after that check and before this task is unregistered;
+     * after a success that request is started now instead of being lost, after a failure it is dropped.
+     */
     private fun finishTask(
         projectId: String,
         job: kotlinx.coroutines.Job?,
         error: String?,
     ) {
-        synchronized(lock) {
-            if (jobs[projectId] !== job) return
-            jobs.remove(projectId)
-            if (error != null) pendingAnalyses.remove(projectId)
-            val stage = tasks[projectId]?.stage ?: Stage.PROXY
-            if (error == null) tasks.remove(projectId) else tasks[projectId] = TaskState(stage, error = error)
-        }
+        val queued =
+            synchronized(lock) {
+                if (jobs[projectId] !== job) return
+                jobs.remove(projectId)
+                val queued = pendingAnalyses.remove(projectId)
+                val stage = tasks[projectId]?.stage ?: Stage.PROXY
+                if (error == null) tasks.remove(projectId) else tasks[projectId] = TaskState(stage, error = error)
+                queued.takeIf { error == null }
+            }
         publish()
+        if (queued != null) startAnalysis(projectId, queued)
     }
 
     private fun setProgress(

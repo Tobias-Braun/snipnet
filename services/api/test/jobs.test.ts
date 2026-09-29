@@ -1,13 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema, insertVideo, SEED_DURATION_MS } from './helpers/seed.js';
 
 const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
 const COURT = { roi: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 }, netPoint: { x: 0.4, y: 0.55 } };
-const DURATION_MS = 90_000;
+const DURATION_MS = SEED_DURATION_MS;
 const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
 
 interface JobBody {
@@ -34,13 +33,7 @@ describe('job routes', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
     // A public endpoint that differs from the internal one shows which of them the worker's proxy URL is signed for.
     app = await buildApp({
       config: { ...schema.config, s3: { ...schema.config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } },
@@ -68,24 +61,14 @@ describe('job routes', () => {
     userId: string,
     overrides: { status?: 'created' | 'uploaded' | 'analyzed' | 'failed'; court?: boolean } = {},
   ): Promise<string> {
-    const row = await app.db
-      .insertInto('videos')
-      .values({
-        user_id: userId,
-        filename: 'match.mov',
-        duration_ms: DURATION_MS,
-        width: 854,
-        height: 480,
-        fps: 15,
-        proxy_size_bytes: 2048,
-        status: overrides.status ?? 'uploaded',
-        court: overrides.court === false ? null : JSON.stringify(COURT),
-        object_key: `proxies/${userId}/seed-${String(counter)}.mp4`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const id = await insertVideo(app.db, {
+      user_id: userId,
+      status: overrides.status ?? 'uploaded',
+      court: overrides.court === false ? null : JSON.stringify(COURT),
+      object_key: `proxies/${userId}/seed-${String(counter)}.mp4`,
+    });
     counter += 1;
-    return row.id;
+    return id;
   }
 
   async function analyze(auth: { authorization: string }, videoId: string) {

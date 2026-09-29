@@ -88,22 +88,21 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 | `POST /internal/jobs/:id/progress` | `{ workerId, attempt, progress }` | `204`, extends lease |
 | `POST /internal/jobs/:id/result` | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed`. `409` also when the proxy was replaced or removed since `upload-complete` (job and video are then `failed`, no prediction is stored) |
 | `POST /internal/jobs/:id/fail` | `{ workerId, attempt, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
-| `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts. |
-| `POST /internal/videos/:id/court-suggestion` | `CourtSuggestion` or JSON `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running` |
-| `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or is leased to another worker |
+| `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, attempt, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts; `attempt` is the new attempts value. |
+| `POST /internal/videos/:id/court-suggestion` | `{ workerId, attempt, suggestion }`, `suggestion` a `CourtSuggestion` or `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]`, a ROI leaving the frame or a missing `workerId`/`attempt`, `404` unknown video or no task, `409` task not `running` or claimed again (worker or attempt differ) |
+| `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, attempt, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or was claimed again (worker or attempt differ) |
 
 `progress`, `result` and `fail` carry the `workerId` that was sent to `claim` and the `attempt` (a positive integer),
 which is the `job.attempts` value the claim response returned. If the job is not `running`, its `worker_id` differs
 or its `attempts` differs from `attempt` (the lease expired and the job was re-claimed, by another worker or by the
 same `workerId`), the API answers `409` and changes nothing. The attempt makes the check exact even when two workers
-share a `workerId`. A missing `workerId` or `attempt` is a `400`. Court detection does not use `attempt`. The worker
-treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on `progress` also aborts the
-model run early. A `409` on the result can also mean the proxy changed after `upload-complete`, so the worker logs the
+share a `workerId`. A missing `workerId` or `attempt` is a `400`. The court detection result and fail reports follow
+the same rule, with the `attempt` returned by `court-detection/claim`. The worker treats the `409` as "lease lost": it
+drops the job without posting `fail`, and a `409` on `progress` also aborts the model run early. A `409` on the result can also mean the proxy changed after `upload-complete`, so the worker logs the
 message of the response's error envelope rather than assuming a reclaim.
 
-For court detection only the failure report carries the `workerId`: a result from a worker whose lease expired is
-still a valid detection of the same proxy, so it is accepted while the task is `running`, whereas a stale failure
-report must not requeue the attempt of the worker that took the task over. A `409` on the result is treated as
+A stale court detection report must neither finish nor requeue the attempt of the worker that took the task over,
+so both reports are checked against the current claim under the row lock. A `409` on the result is treated as
 "lease lost" as well: the worker drops the task without posting `fail`.
 
 ## Court suggestion
@@ -119,7 +118,7 @@ Instead the worker detects the net once the proxy is uploaded and the result is 
 - The first successful `upload-complete` enqueues one detection task for the video (a repeated call does not queue
   another). The worker claims it through `POST /internal/court-detection/claim`, downloads the proxy, calls
   `snipnet_ml.court_detect.detect_court(proxy)` and posts the outcome to `POST /internal/videos/:id/court-suggestion`:
-  the `CourtSuggestion` body, or a JSON `null` body when no net was found. The endpoint validates that every
+  `{ workerId, attempt, suggestion }` with the `CourtSuggestion`, or a `null` suggestion when no net was found. The endpoint validates that every
   ROI and `netPoint` coordinate and `confidence` are in `[0, 1]` and that the ROI lies inside the frame.
 - Failures go to `POST /internal/videos/:id/court-suggestion/fail`. A video the detector cannot decode
   (`InvalidInputError`) is reported non-retryable, everything else retryable up to 3 attempts. Leases work as for

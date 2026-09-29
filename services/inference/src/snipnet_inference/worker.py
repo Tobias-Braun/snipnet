@@ -70,7 +70,8 @@ def prediction_body(prediction: Prediction) -> dict[str, Any]:
 
 
 def court_suggestion_body(suggestion: CourtSuggestion | None) -> dict[str, Any] | None:
-    """Serialize a detection into the ``POST /internal/videos/:id/court-suggestion`` body, ``None`` for no net."""
+    """Serialize a detection into the ``suggestion`` of the ``POST /internal/videos/:id/court-suggestion`` body,
+    ``None`` for no net."""
     if suggestion is None:
         return None
     return {
@@ -131,10 +132,12 @@ class Worker:
             return False
         response.raise_for_status()
         claim = response.json()
-        self._process_court_detection(claim["videoId"], claim["proxyUrl"])
+        self._process_court_detection(claim["videoId"], claim["attempt"], claim["proxyUrl"])
         return True
 
-    def _process_court_detection(self, video_id: str, proxy_url: str) -> None:
+    def _process_court_detection(self, video_id: str, attempt: int, proxy_url: str) -> None:
+        """Run one claimed detection. ``attempt`` is the claim's value and goes into both reports, so a stale report
+        of an earlier claim (even under the same worker id) is rejected by the API."""
         log.info("claimed court detection for video %s", video_id)
         base = f"{self._settings.api_url}/internal/videos/{video_id}/court-suggestion"
         try:
@@ -142,8 +145,15 @@ class Worker:
                 proxy_path = Path(tmp) / "proxy.mp4"
                 self._download(proxy_url, proxy_path)
                 suggestion = detect_court(proxy_path)
-            # A JSON `null` body reports that the detection ran and found no net.
-            self._post_url(base, court_suggestion_body(suggestion))
+            # A `null` suggestion reports that the detection ran and found no net.
+            self._post_url(
+                base,
+                {
+                    "workerId": self._settings.worker_id,
+                    "attempt": attempt,
+                    "suggestion": court_suggestion_body(suggestion),
+                },
+            )
             log.info("court detection for video %s done", video_id)
         except LeaseLostError:
             # The task finished elsewhere or another worker owns it now; a failure report would be wrong, so drop it.
@@ -154,7 +164,8 @@ class Worker:
             error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
             try:
                 self._post_url(
-                    f"{base}/fail", {"workerId": self._settings.worker_id, "error": error, "retryable": retryable}
+                    f"{base}/fail",
+                    {"workerId": self._settings.worker_id, "attempt": attempt, "error": error, "retryable": retryable},
                 )
             except (LeaseLostError, httpx.HTTPError) as post_exc:
                 # The lease expires and the task is claimed again, or the video is gone.

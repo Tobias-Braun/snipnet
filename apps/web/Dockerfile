@@ -8,6 +8,9 @@ COPY apps/web/package.json apps/web/package.json
 COPY services/api/package.json services/api/package.json
 RUN pnpm install --frozen-lockfile --filter @snipnet/web...
 COPY apps/web apps/web
+# Vite inlines VITE_* variables at build time, so the API base URL for the waitlist form is a build argument.
+ARG VITE_API_URL=
+ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm --filter @snipnet/web run build
 
 # The unprivileged variant runs nginx as a non-root user, which is why it listens on 8080 instead of 80.

@@ -1,8 +1,17 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App.tsx';
 import { FEATURES, RELEASES_URL, STEPS } from './content.ts';
+
+// The page fetches the latest release on mount; a failing fetch keeps the releases page fallback.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('App', () => {
   it('renders the product pitch as the single page heading', () => {

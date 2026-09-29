@@ -151,10 +151,15 @@ def probe_duration(path: str | Path) -> float:
 
 
 def decode_gray_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np.ndarray]]:
-    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`.
+    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`."""
+    return decode_frames(path, fps, "gray")
 
-    This is a generator on purpose: an hour of 480p proxy at 5 fps is several GB of grayscale pixels, so frames are
-    consumed one at a time instead of being stacked into a single array.
+
+def decode_frames(path: str | Path, fps: float, pixel_format: str) -> Iterator[tuple[float, np.ndarray]]:
+    """Yield `(timestamp_s, frame)` pairs resampled to `fps`, converted to the PyAV `pixel_format` (e.g. "gray").
+
+    This is a generator on purpose: an hour of 480p proxy at 5 fps is several GB of pixels, so frames are consumed one
+    at a time instead of being stacked into a single array. It is the single home of the resampling logic.
     """
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
@@ -164,7 +169,7 @@ def decode_gray_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np
         for frame in container.decode(stream):
             if frame.time is None or frame.time + 1e-6 < next_time:
                 continue
-            yield frame.time, frame.to_ndarray(format="gray")
+            yield frame.time, frame.to_ndarray(format=pixel_format)
             # Advance past the timestamp actually taken so a slow source does not cause a burst of catch-up frames.
             next_time = max(next_time + step, frame.time + step / 2)
 

@@ -27,7 +27,7 @@ import av
 import numpy as np
 import pandas as pd
 
-from snipnet_ml.features import expanded_pixel_box, probe_duration
+from snipnet_ml.features import decode_frames, expanded_pixel_box, probe_duration
 from snipnet_ml.labels import Court, Roi
 
 # Bump whenever the meaning of a person feature column changes.
@@ -250,16 +250,7 @@ def foot_in_roi(foot: tuple[float, float], roi: Roi, margin: float) -> bool:
 
 def decode_rgb_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np.ndarray]]:
     """Yield `(timestamp_s, rgb_frame)` pairs resampled to `fps`, one frame at a time."""
-    with av.open(str(path)) as container:
-        stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
-        next_time = 0.0
-        step = 1.0 / fps
-        for frame in container.decode(stream):
-            if frame.time is None or frame.time + 1e-6 < next_time:
-                continue
-            yield frame.time, frame.to_ndarray(format="rgb24")
-            next_time = max(next_time + step, frame.time + step / 2)
+    return decode_frames(path, fps, "rgb24")
 
 
 def track_persons(

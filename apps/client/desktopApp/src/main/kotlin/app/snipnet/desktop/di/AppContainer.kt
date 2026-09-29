@@ -34,15 +34,19 @@ import java.util.UUID
  *
  * @param engine HTTP engine of the API client; tests inject a mock engine.
  * @param baseUrl API root; defaults to `SNIPNET_API_URL` or the local development server.
+ * @param videoEngineOverride replaces the JavaCV engine, so UI tests can run the screens without decoding real video.
  */
 class AppContainer(
     dataDir: Path = defaultDataDir(),
     private val engine: HttpClientEngine = CIO.create(),
     baseUrl: String = defaultBaseUrl(),
+    videoEngineOverride: VideoEngine? = null,
 ) {
     val windowSettingsStore = WindowSettingsStore(dataDir.resolve("window.json"))
 
-    val videoEngine: VideoEngine by lazy { JavaCvVideoEngine(dataDir.resolve("cache").resolve("media")) }
+    val videoEngine: VideoEngine by lazy {
+        videoEngineOverride ?: JavaCvVideoEngine(dataDir.resolve("cache").resolve("media"))
+    }
 
     val navigator = Navigator(start = Screen.Login)
 

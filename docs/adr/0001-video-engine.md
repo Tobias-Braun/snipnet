@@ -81,5 +81,6 @@ Download size of the natives per platform (`ffmpeg` `-gpl` + `javacpp`): macOS a
   before distribution.
 - JavaCV's grabber API decodes on the calling thread; the player owns its threads and callers only use the
   thread-safe `VideoPlayer` methods and flows.
-- On Linux the FFmpeg natives need `libpulse.so.0` (package `libpulse0`, also provided by PipeWire's PulseAudio
-  layer), which every mainstream desktop has. The GitHub runner image does not, so the client workflow installs it.
+- On Linux the FFmpeg natives link dynamically against PulseAudio, VA-API, VDPAU and a few X11 libraries (packages
+  `libpulse0`, `libva2`, `libvdpau1`, ...), which mainstream desktops have. The GitHub runner image does not, so the
+  client workflow installs them.

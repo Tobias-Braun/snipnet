@@ -30,8 +30,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      # The bundled FFmpeg links its avdevice library against PulseAudio, which the runner image does not ship.
-      - run: sudo apt-get update && sudo apt-get install -y libpulse0
+      # The bundled FFmpeg links against PulseAudio, VA-API, VDPAU and X11 libraries that the runner image lacks.
+      - run: >
+          sudo apt-get update && sudo apt-get install -y
+          libpulse0 libva2 libva-drm2 libva-x11-2 libvdpau1 libxv1 libxcb-shm0 libxcb-shape0 libxcb-xfixes0
       - uses: gradle/actions/setup-gradle@v6
       # `check` runs ktlint on every source set and the unit tests of all modules.
       - run: ./gradlew check --stacktrace

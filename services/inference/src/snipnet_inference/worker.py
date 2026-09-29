@@ -153,7 +153,7 @@ class Worker:
             return False
         response.raise_for_status()
         claim = response.json()
-        self._process(claim["job"]["id"], claim["video"], claim["proxyUrl"])
+        self._process(claim["job"]["id"], claim["job"]["attempts"], claim["video"], claim["proxyUrl"])
         return True
 
     def _headers(self) -> dict[str, str]:
@@ -162,7 +162,9 @@ class Worker:
     def _job_url(self, job_id: str, action: str) -> str:
         return f"{self._settings.api_url}/internal/jobs/{job_id}/{action}"
 
-    def _process(self, job_id: str, video: dict[str, Any], proxy_url: str) -> None:
+    def _process(self, job_id: str, attempt: int, video: dict[str, Any], proxy_url: str) -> None:
+        """Run one claimed job. ``attempt`` is the claim's ``attempts`` value and goes into every report, so the API
+        can tell this claim apart from a later one by the same worker id."""
         log.info("claimed job %s", job_id)
         try:
             # The directory is removed on every exit path, including failures halfway through the download.
@@ -170,16 +172,20 @@ class Worker:
                 proxy_path = Path(tmp) / "proxy.mp4"
                 self._download(proxy_url, proxy_path)
                 prediction = self._model.predict(
-                    proxy_path, parse_court(video.get("court")), self._progress_reporter(job_id)
+                    proxy_path, parse_court(video.get("court")), self._progress_reporter(job_id, attempt)
                 )
-            self._post(job_id, "result", {"workerId": self._settings.worker_id, **prediction_body(prediction)})
+            self._post(
+                job_id,
+                "result",
+                {"workerId": self._settings.worker_id, "attempt": attempt, **prediction_body(prediction)},
+            )
             log.info("job %s succeeded", job_id)
         except LeaseLostError:
             # Another worker owns the job now, so reporting a failure would disturb its attempt. Just drop the job.
             log.warning("job %s was reclaimed by another worker, dropping it", job_id)
         except Exception as exc:
             log.exception("job %s failed", job_id)
-            self._report_failure(job_id, exc)
+            self._report_failure(job_id, attempt, exc)
 
     def _download(self, url: str, dest: Path) -> None:
         # The proxy URL is presigned, so it must not receive the internal token.
@@ -195,7 +201,7 @@ class Worker:
             # not chained into the logs or into the error reported to the API.
             raise ProxyDownloadError(f"proxy download failed: {type(exc).__name__}") from None
 
-    def _progress_reporter(self, job_id: str) -> Callable[[float], None]:
+    def _progress_reporter(self, job_id: str, attempt: int) -> Callable[[float], None]:
         last_sent: float | None = None
 
         def report(fraction: float) -> None:
@@ -206,7 +212,13 @@ class Worker:
             last_sent = now
             try:
                 self._post(
-                    job_id, "progress", {"workerId": self._settings.worker_id, "progress": min(1.0, max(0.0, fraction))}
+                    job_id,
+                    "progress",
+                    {
+                        "workerId": self._settings.worker_id,
+                        "attempt": attempt,
+                        "progress": min(1.0, max(0.0, fraction)),
+                    },
                 )
             except LeaseLostError:
                 # Propagates through the model so the run is aborted early instead of burning compute.
@@ -217,11 +229,15 @@ class Worker:
 
         return report
 
-    def _report_failure(self, job_id: str, exc: Exception) -> None:
+    def _report_failure(self, job_id: str, attempt: int, exc: Exception) -> None:
         retryable = not isinstance(exc, InvalidInputError)
         try:
             error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
-            self._post(job_id, "fail", {"workerId": self._settings.worker_id, "error": error, "retryable": retryable})
+            self._post(
+                job_id,
+                "fail",
+                {"workerId": self._settings.worker_id, "attempt": attempt, "error": error, "retryable": retryable},
+            )
         except LeaseLostError:
             log.warning("job %s was reclaimed before its failure could be reported", job_id)
         except httpx.HTTPError as post_exc:

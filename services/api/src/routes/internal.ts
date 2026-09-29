@@ -30,11 +30,18 @@ const JobParams = Type.Object({ id: Type.String() });
 /** Identifies the worker that claimed the job; reports from any other worker are rejected. */
 const WorkerId = Type.String({ minLength: 1, maxLength: 200 });
 
+/**
+ * The `attempts` value of the job as returned by claim. Unlike the worker id it is unique per claim, so a stale report
+ * from an earlier attempt is detected even if the same worker id claimed the job again.
+ */
+const Attempt = Type.Integer({ minimum: 1 });
+
 const Unit = Type.Number({ minimum: 0, maximum: 1 });
 
 const ResultBody = Type.Object(
   {
     workerId: WorkerId,
+    attempt: Attempt,
     modelVersion: Type.String({ minLength: 1, maxLength: 200 }),
     segments: Type.Array(SegmentInput),
     scores: Type.Union([
@@ -51,6 +58,17 @@ const ResultBody = Type.Object(
 /** Failure report of a job or a court detection task, sent by the worker that holds the lease. */
 const FailBody = Type.Object(
   { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
+  { additionalProperties: false },
+);
+
+/** Failure report of a job: additionally names the attempt, see `Attempt`. */
+const JobFailBody = Type.Object(
+  {
+    workerId: WorkerId,
+    attempt: Attempt,
+    error: Type.String({ maxLength: 4000 }),
+    retryable: Type.Boolean(),
+  },
   { additionalProperties: false },
 );
 
@@ -85,13 +103,24 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
   const security = [{ internalToken: [] }];
   const error = Type.Ref('ErrorResponse');
 
-  /** Route schema shared by the failure reports of jobs and court detection tasks. */
+  const failResponse = { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error };
+
+  /** Route schema of the failure report of a court detection task. */
   const failSchema = {
     tags: ['internal'],
     security,
     params: JobParams,
     body: FailBody,
-    response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
+    response: failResponse,
+  };
+
+  /** Route schema of the failure report of a job. */
+  const jobFailSchema = {
+    tags: ['internal'],
+    security,
+    params: JobParams,
+    body: JobFailBody,
+    response: failResponse,
   };
 
   /**
@@ -112,17 +141,22 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
   }
 
   /**
-   * Locks the job row for the rest of the transaction and requires it to be running and held by `workerId`, so
+   * Locks the job row for the rest of the transaction and requires it to be running and held by `workerId` in attempt `attempt`, so
    * progress, result and failure reports serialize against each other and against a claim by another worker. A
    * worker whose lease expired and was taken over by another worker is answered with 409 and must drop the job.
    */
-  async function lockRunningJob(trx: Tx, id: string, workerId: string): Promise<Selectable<JobsTable>> {
+  async function lockRunningJob(
+    trx: Tx,
+    id: string,
+    workerId: string,
+    attempt: number,
+  ): Promise<Selectable<JobsTable>> {
     if (!UUID_PATTERN.test(id)) throw new AppError('not_found', 'Job not found');
     const job = await trx.selectFrom('jobs').selectAll().where('id', '=', id).forUpdate().executeTakeFirst();
     if (job === undefined) throw new AppError('not_found', 'Job not found');
     if (job.status !== 'running') throw new AppError('conflict', `Job is ${job.status}, not running`);
-    if (job.worker_id !== workerId) {
-      throw new AppError('conflict', 'Job is held by another worker, its lease was taken over');
+    if (job.worker_id !== workerId || job.attempts !== attempt) {
+      throw new AppError('conflict', 'Job is held by another worker or attempt, its lease was taken over');
     }
     return job;
   }
@@ -232,13 +266,16 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         tags: ['internal'],
         security,
         params: JobParams,
-        body: Type.Object({ workerId: WorkerId, progress: Unit }, { additionalProperties: false }),
+        body: Type.Object(
+          { workerId: WorkerId, attempt: Attempt, progress: Unit },
+          { additionalProperties: false },
+        ),
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
       },
     },
     async (request, reply) => {
       await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
+        const job = await lockRunningJob(trx, request.params.id, request.body.workerId, request.body.attempt);
         await trx
           .updateTable('jobs')
           .set({
@@ -268,7 +305,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     async (request, reply) => {
       const { modelVersion, segments, scores } = request.body;
       await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
+        const job = await lockRunningJob(trx, request.params.id, request.body.workerId, request.body.attempt);
         const video = await trx
           .selectFrom('videos')
           .selectAll()
@@ -310,10 +347,10 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
   );
 
-  app.post('/jobs/:id/fail', { schema: failSchema }, async (request, reply) => {
+  app.post('/jobs/:id/fail', { schema: jobFailSchema }, async (request, reply) => {
     const { error: message, retryable } = request.body;
     await app.db.transaction().execute(async (trx) => {
-      const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
+      const job = await lockRunningJob(trx, request.params.id, request.body.workerId, request.body.attempt);
       if (retryable && job.attempts < MAX_ATTEMPTS) {
         // Back to the queue for another worker; the video stays `analyzing`.
         await trx

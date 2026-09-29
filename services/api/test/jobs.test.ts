@@ -66,7 +66,7 @@ describe('job routes', () => {
   /** Inserts a video directly, so tests do not depend on the object store that upload-complete would query. */
   async function seedVideo(
     userId: string,
-    overrides: { status?: 'created' | 'uploaded' | 'analyzed'; court?: boolean } = {},
+    overrides: { status?: 'created' | 'uploaded' | 'analyzed' | 'failed'; court?: boolean } = {},
   ): Promise<string> {
     const row = await app.db
       .insertInto('videos')
@@ -165,11 +165,16 @@ describe('job routes', () => {
       expect((await analyze(user.auth, noCourt)).statusCode).toBe(409);
     });
 
-    it('allows a new analysis of an already analyzed video', async () => {
-      const user = await newUser();
-      const videoId = await seedVideo(user.id, { status: 'analyzed' });
-      expect((await analyze(user.auth, videoId)).statusCode).toBe(202);
-    });
+    it.each(['analyzed', 'failed'] as const)(
+      'allows a new analysis of a video in status %s',
+      async (status) => {
+        const user = await newUser();
+        const videoId = await seedVideo(user.id, { status });
+        const response = await analyze(user.auth, videoId);
+        expect(response.statusCode).toBe(202);
+        expect(response.json<JobBody>()).toMatchObject({ videoId, status: 'queued' });
+      },
+    );
 
     it('hides videos of other users and malformed ids', async () => {
       const owner = await newUser();

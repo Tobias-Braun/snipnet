@@ -66,11 +66,11 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 
 ### Re-analysis
 
-`analyze` is allowed in every status except `created`, and it is rejected while a job is `queued`/`running`. A video in
-`analyzed` (re-analyze) or `failed` (retry) therefore gets a new job, and a successful job creates a new `prediction`
-SegmentSet. Earlier sets stay as history, so a video can have several prediction sets (and user sets descending from
-any of them); clients pick the set to show from `GET /v1/videos/:id/segment-sets` (oldest first) instead of assuming
-one prediction per video.
+`analyze` is allowed in every status except `created`, as long as a court is set and no job is `queued`/`running`. A
+video in `analyzed` (re-analyze) or `failed` (retry) therefore gets a new job, and a successful job creates a new
+`prediction` SegmentSet. Earlier sets stay as history, so a video can have several prediction sets (and user sets
+descending from any of them); clients pick the set to show from `GET /v1/videos/:id/segment-sets` (oldest first)
+instead of assuming one prediction per video.
 
 ### Training export
 

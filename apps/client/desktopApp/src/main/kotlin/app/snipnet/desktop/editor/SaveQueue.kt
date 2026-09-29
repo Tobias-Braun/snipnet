@@ -13,6 +13,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 
 /** What one attempt to upload the queued save of a project did. */
 sealed interface FlushResult {
@@ -61,19 +62,24 @@ class SaveQueue(
     private val upload: suspend (remoteVideoId: String, save: PendingSave) -> SegmentSet,
 ) {
     private val mutex = Mutex()
-    private val attached = HashSet<String>()
+    private val attached = ConcurrentHashMap.newKeySet<String>()
     private val rejected = HashSet<String>()
 
     /**
      * Uploads the queued save of [projectId]. On success the store is updated first (new base set, drained edit
      * log, cleared queue) and then [onSaved] runs without suspending in between, so a caller that mirrors the store
      * in memory cannot see a half-updated state.
+     *
+     * A [background] flush (the retry loop) gives up when an editor attached to the project in the meantime, so
+     * once [attach] and [settle] returned, no flush other than the editor's own touches that project.
      */
     suspend fun flush(
         projectId: String,
         onSaved: (FlushResult.Saved) -> Unit = {},
+        background: Boolean = false,
     ): FlushResult =
         mutex.withLock {
+            if (background && projectId in attached) return@withLock FlushResult.Idle
             rejected.remove(projectId)
             if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
             val project = store.get(projectId) ?: return@withLock FlushResult.Idle
@@ -116,6 +122,16 @@ class SaveQueue(
         attached += projectId
     }
 
+    /**
+     * Waits for a flush that is running right now. An editor calls it after [attach] and before it reads its project
+     * from the store: a background flush that started before the attach may still update the store (new base set,
+     * drained edit log, cleared queue), and an editor that read the project earlier would keep the stale parent and
+     * post edit log entries that were already saved.
+     */
+    suspend fun settle() {
+        mutex.withLock { }
+    }
+
     fun detach(projectId: String) {
         attached -= projectId
     }
@@ -132,7 +148,7 @@ class SaveQueue(
                     .withPendingSave()
                     .map { it.id }
                     .filter { it !in attached && it !in rejected }
-                    .forEach { flush(it) }
+                    .forEach { flush(it, background = true) }
             }
         }
     }

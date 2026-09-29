@@ -98,6 +98,7 @@ class EditorStateHolder(
     }
 
     private suspend fun load() {
+        saveQueue.settle()
         val project = projectStore.get(projectId)
         if (project == null) {
             update { it.copy(loading = false, loadError = "This project no longer exists.") }

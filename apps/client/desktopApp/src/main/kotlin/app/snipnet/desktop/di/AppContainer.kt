@@ -18,12 +18,13 @@ import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
 import app.snipnet.shared.api.SnipnetApi
 import app.snipnet.shared.store.ProjectStore
-import app.snipnet.shared.store.openDatabase
+import app.snipnet.shared.store.openClosableDatabase
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.nio.file.Path
 import java.util.UUID
 
@@ -41,7 +42,7 @@ class AppContainer(
     private val engine: HttpClientEngine = CIO.create(),
     baseUrl: String = defaultBaseUrl(),
     videoEngineOverride: VideoEngine? = null,
-) {
+) : AutoCloseable {
     val windowSettingsStore = WindowSettingsStore(dataDir.resolve("window.json"))
 
     val videoEngine: VideoEngine by lazy {
@@ -52,9 +53,12 @@ class AppContainer(
 
     val api = SnipnetApi(engine, baseUrl)
 
+    /** Kept separate from [projectStore] so [close] releases the connection only when it was ever opened. */
+    private val database = lazy { openClosableDatabase(dataDir.resolve("snipnet.db")) }
+
     val projectStore: ProjectStore by lazy {
         ProjectStore(
-            openDatabase(dataDir.resolve("snipnet.db")),
+            database.value.database,
             newId = { UUID.randomUUID().toString() },
             now = System::currentTimeMillis,
             currentUserId = { session.user.value?.id },
@@ -65,19 +69,22 @@ class AppContainer(
      * Import, upload and analysis run here for the whole app lifetime. A finished analysis opens the editor, but only
      * when the user is still looking at the projects list, so it never yanks them out of another screen.
      */
-    val pipeline: ImportPipeline by lazy {
-        ImportPipeline(
-            api = api,
-            store = projectStore,
-            videoEngine = videoEngine,
-            transcoder = FfmpegProxyTranscoder(),
-            uploader = HttpProxyUploader(engine),
-            proxyDir = dataDir.resolve("proxies"),
-            onAnalyzed = { project ->
-                if (navigator.current == Screen.Projects) navigator.push(Screen.Editor(project.id))
-            },
-        )
-    }
+    private val pipelineLazy =
+        lazy {
+            ImportPipeline(
+                api = api,
+                store = projectStore,
+                videoEngine = videoEngine,
+                transcoder = FfmpegProxyTranscoder(),
+                uploader = HttpProxyUploader(engine),
+                proxyDir = dataDir.resolve("proxies"),
+                onAnalyzed = { project ->
+                    if (navigator.current == Screen.Projects) navigator.push(Screen.Editor(project.id))
+                },
+            )
+        }
+
+    val pipeline: ImportPipeline by pipelineLazy
 
     /**
      * Uploads saved corrections. [startBackgroundWork] runs its loop, which retries the saves of projects without an
@@ -89,9 +96,30 @@ class AppContainer(
         }
     }
 
+    /** Scope of the work started by [startBackgroundWork]; cancelled by [close]. */
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
     /** Starts the background work that must run for the whole app lifetime, called once from the root composable. */
     fun startBackgroundWork() {
-        saveQueue.start(CoroutineScope(SupervisorJob() + Dispatchers.Main))
+        saveQueue.start(backgroundScope)
+    }
+
+    /**
+     * Stops everything the container started: the save-queue loop, a running import or upload, the HTTP client, the
+     * shared [engine] and the database connection. Called when the window closes and by tests, which would otherwise
+     * leave the loop running and the database file open for the rest of the JVM. Safe to call twice; the container
+     * must not be used afterwards.
+     *
+     * The engine is closed explicitly because Ktor's `HttpClient(engine)` does not manage an engine instance it was
+     * handed, so closing [api] alone would leave a CIO engine's selector and dispatcher threads running. The container
+     * owns the engine either way: the uploader shares it and nothing else outlives the container.
+     */
+    override fun close() {
+        backgroundScope.cancel()
+        if (pipelineLazy.isInitialized()) pipeline.reset()
+        api.close()
+        engine.close()
+        if (database.isInitialized()) database.value.close()
     }
 
     val session =

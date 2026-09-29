@@ -23,6 +23,9 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.deleteRecursively
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -34,8 +37,20 @@ private const val SCREEN_TIMEOUT_MS = 10_000L
  * engine) are replaced, so navigation, state holders and composables are the production ones. Compose's test runtime
  * renders offscreen with the software renderer, so no display server is needed on CI.
  */
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalPathApi::class)
 class AppShellUiTest {
+    private val dataDir = Files.createTempDirectory("snipnet-shell")
+
+    /** The container of the running test, so [tearDown] can stop it even when an assertion failed midway. */
+    private var created: AppContainer? = null
+
+    /** Stops the save-queue loop and closes the database, which then lets the temporary data dir be deleted. */
+    @AfterTest
+    fun tearDown() {
+        created?.close()
+        dataDir.deleteRecursively()
+    }
+
     private val json = headersOf(HttpHeaders.ContentType, "application/json")
 
     private val user =
@@ -72,11 +87,11 @@ class AppShellUiTest {
                 }
             val container =
                 AppContainer(
-                    Files.createTempDirectory("snipnet-shell"),
+                    dataDir,
                     engine = http,
                     baseUrl = "http://snipnet.test",
                     videoEngineOverride = FakeEngine(),
-                )
+                ).also { created = it }
             // The project belongs to the account, so it is created while that account is signed in. Signing out
             // afterwards keeps it (projects are not cleared on logout) and the UI then signs in through the form.
             runBlocking { container.session.login("anna@example.com", "correct horse battery") }

@@ -108,6 +108,7 @@ fun main() {
             onCloseRequest = {
                 // A move or resize within the debounce interval before quitting would otherwise be lost.
                 persist()
+                container.close()
                 exitApplication()
             },
             state = windowState,

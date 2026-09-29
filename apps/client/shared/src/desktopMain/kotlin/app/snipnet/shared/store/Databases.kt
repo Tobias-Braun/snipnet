@@ -11,9 +11,24 @@ import java.nio.file.Path
  * Opens (creating and migrating as needed) the database file at [file], creating parent directories first.
  * The schema version is tracked in SQLite's `user_version` pragma, which the JDBC driver does not manage itself.
  */
-fun openDatabase(file: Path): SnipnetDatabase {
+fun openDatabase(file: Path): SnipnetDatabase = openClosableDatabase(file).database
+
+/**
+ * A database together with the driver that owns its connection. [close] releases the connection, which the plain
+ * [SnipnetDatabase] cannot do; a caller that outlives its database (a test, say) needs it to free the file.
+ */
+class ClosableDatabase(
+    val database: SnipnetDatabase,
+    private val driver: SqlDriver,
+) : AutoCloseable {
+    override fun close() = driver.close()
+}
+
+/** Like [openDatabase], but returns a handle that can close the underlying connection. */
+fun openClosableDatabase(file: Path): ClosableDatabase {
     Files.createDirectories(file.toAbsolutePath().parent)
-    return databaseOn(JdbcSqliteDriver("jdbc:sqlite:${file.toAbsolutePath()}"))
+    val driver = JdbcSqliteDriver("jdbc:sqlite:${file.toAbsolutePath()}")
+    return ClosableDatabase(databaseOn(driver), driver)
 }
 
 /** A throwaway database that lives only as long as the returned driver connection; used by tests. */

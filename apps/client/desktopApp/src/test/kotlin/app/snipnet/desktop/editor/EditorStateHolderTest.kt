@@ -326,6 +326,23 @@ class EditorStateHolderTest {
     }
 
     @Test
+    fun keyboardSeeksScrollAnOffScreenPlayheadIntoView() {
+        val holder = holder()
+        holder.setViewportWidth(1000.0)
+        holder.zoomAround(0.0, 4.0)
+        holder.scrollByPx(2_000.0)
+        val scrolled = holder.state.value.viewport
+        holder.seek(scrolled.pxToTime(500.0))
+
+        holder.perform(EditorCommand.JumpBack)
+        holder.perform(EditorCommand.JumpBack)
+
+        val view = holder.state.value.viewport
+        assertTrue(view.scrollMs < scrolled.scrollMs, "scrolled back from ${scrolled.scrollMs} to ${view.scrollMs}")
+        assertTrue(view.timeToPx(holder.state.value.playheadMs) in 0.0..1000.0)
+    }
+
+    @Test
     fun theWholeVideoFitsAtMinimumZoomAndScrollStaysInside() {
         val holder = holder()
         holder.setViewportWidth(1000.0)

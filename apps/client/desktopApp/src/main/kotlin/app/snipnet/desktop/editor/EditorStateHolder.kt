@@ -269,9 +269,13 @@ class EditorStateHolder(
         seek((index * frameMs).roundToLong())
     }
 
-    /** Moves the playhead (and the picture) to [timeMs] with a frame-accurate seek. */
+    /**
+     * Moves the playhead (and the picture) to [timeMs] with a frame-accurate seek and scrolls the timeline when the
+     * new position is outside the view, so keyboard seeks (frame steps, J, N/P) never leave the playhead off screen.
+     */
     fun seek(timeMs: Long) {
         seekPlayer(timeMs.coerceIn(0, state.value.durationMs), exact = true)
+        revealPlayhead()
     }
 
     /** Seek while the user drags the playhead: keyframe-only decoding keeps scrubbing responsive. */
@@ -299,7 +303,6 @@ class EditorStateHolder(
             } ?: return
         selectOnly(target.id)
         seek(target.startMs)
-        revealPlayhead()
     }
 
     /** Selects the segment [id], seeks to its start and scrolls it into view; used by the side list. */
@@ -307,7 +310,6 @@ class EditorStateHolder(
         val segment = state.value.timeline?.find(id) ?: return
         selectOnly(id)
         seek(segment.startMs)
-        revealPlayhead()
     }
 
     private fun selectOnly(id: Long) = update { s -> s.copy(history = s.history?.updateView { it.select(setOf(id)) }) }

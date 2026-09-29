@@ -75,7 +75,7 @@ def probe_duration_ms(video_path: Path) -> int:
     """Read the container duration with ffprobe, raising ``InvalidInputError`` if it is missing or unusable."""
     try:
         result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(video_path)],
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", "-i", str(video_path)],
             capture_output=True,
             text=True,
             check=True,

@@ -20,7 +20,8 @@ from snipnet_ml.model import Court, Point, Prediction, Roi, probe_duration_ms
 
 
 def load_court(path: Path) -> Court:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    # The file is chosen by the operator on the command line, so reading an arbitrary path is intended.
+    data = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR
     parsed = LabelCourt.model_validate(data.get("court", data))
     roi, net = parsed.roi, parsed.net_point
     return Court(roi=Roi(roi.x, roi.y, roi.width, roi.height), net_point=Point(net.x, net.y))

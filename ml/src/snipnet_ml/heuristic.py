@@ -105,7 +105,8 @@ class HeuristicParams:
     @classmethod
     def from_yaml(cls, path: str | Path) -> HeuristicParams:
         """Defaults overridden by the top-level keys of a YAML mapping; unknown keys are rejected as typos."""
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+        # The file is chosen by the operator on the command line or in the environment, so any path is intended.
+        data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}  # NOSONAR
         if not isinstance(data, dict):
             raise ValueError(f"{path} must contain a YAML mapping of parameter names to values")
         known = {f.name for f in fields(cls)}

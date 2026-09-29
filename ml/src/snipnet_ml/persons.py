@@ -58,6 +58,9 @@ class PersonConfig:
     # this many box heights of the track's last foot point still continues the track. At 2.5 fps a sprinting
     # player moves further than their own width between frames, so the boxes no longer overlap. 0 disables it.
     foot_gate: float = 1.0
+    # A track that missed n frames may have moved for (n + 1) frame intervals, so its foot gate grows by that
+    # factor, capped here so a long-lost track does not swallow a nearby other player. 1 keeps the gate fixed.
+    foot_gate_max_scale: float = 2.0
     # A track survives this many analysis frames without a matching detection.
     max_missed: int = 2
 
@@ -70,6 +73,8 @@ class PersonConfig:
             raise ValueError("score_threshold and match_iou must lie in [0, 1]")
         if self.foot_gate < 0:
             raise ValueError("foot_gate must not be negative")
+        if self.foot_gate_max_scale < 1:
+            raise ValueError("foot_gate_max_scale must be at least 1")
         if self.max_missed < 0:
             raise ValueError("max_missed must not be negative")
 
@@ -195,7 +200,8 @@ class IouTracker:
 
     The IoU pass links slow movers. Because frames are 0.4 s apart, a fast player's boxes may not overlap at
     all, so a second greedy pass matches the still unmatched tracks and detections by the distance between
-    their foot points, gated relative to the track's box height (`foot_gate`). Unmatched detections start new
+    their foot points, gated relative to the track's box height (`foot_gate`). The gate grows with the number of
+    frames the track missed, by `missed + 1` up to `foot_gate_max_scale`. Unmatched detections start new
     tracks. No appearance features are used, which is enough for the coarse speed feature.
 
     `aspect` (frame width / height) converts the normalized x axis to the same unit as y, so the distance is
@@ -203,11 +209,17 @@ class IouTracker:
     """
 
     def __init__(
-        self, match_iou: float = 0.2, max_missed: int = 2, foot_gate: float = 1.0, aspect: float = 1.0
+        self,
+        match_iou: float = 0.2,
+        max_missed: int = 2,
+        foot_gate: float = 1.0,
+        aspect: float = 1.0,
+        foot_gate_max_scale: float = 2.0,
     ) -> None:
         self.match_iou = match_iou
         self.max_missed = max_missed
         self.foot_gate = foot_gate
+        self.foot_gate_max_scale = foot_gate_max_scale
         self.aspect = aspect
         self._tracks: list[_Track] = []
         self._next_id = 0
@@ -235,9 +247,10 @@ class IouTracker:
             height = track.box[3] - track.box[1]
             if height <= 0:
                 continue
+            gate = self.foot_gate * min(track.missed + 1, self.foot_gate_max_scale)
             for bi, box in enumerate(boxes):
                 relative = self._foot_distance(track.box, box) / height
-                if relative <= self.foot_gate:
+                if relative <= gate:
                     found.append((relative, ti, bi))
         return sorted(found)
 
@@ -311,7 +324,13 @@ def track_persons(
     for time_s, frame in frames:
         height, width = frame.shape[:2]
         if tracker is None:
-            tracker = IouTracker(config.match_iou, config.max_missed, config.foot_gate, width / height)
+            tracker = IouTracker(
+                config.match_iou,
+                config.max_missed,
+                config.foot_gate,
+                width / height,
+                config.foot_gate_max_scale,
+            )
         x0, y0, x1, y1 = expanded_pixel_box(roi, config.roi_expand, width, height)
         boxes = []
         for detection in detector.detect(frame[y0:y1, x0:x1]):

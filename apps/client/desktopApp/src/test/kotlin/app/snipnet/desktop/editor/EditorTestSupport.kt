@@ -89,12 +89,16 @@ fun newStore(): ProjectStore =
 class FakeSegmentSetServer {
     val uploads = mutableListOf<Pair<String, PendingSave>>()
     var failure: ApiError? = null
+
+    /** Every call of [upload], including the ones that failed. */
+    var attempts = 0
     var sets: List<SegmentSet> = emptyList()
 
     suspend fun upload(
         remoteVideoId: String,
         save: PendingSave,
     ): SegmentSet {
+        attempts++
         failure?.let { throw it }
         uploads += remoteVideoId to save
         return SegmentSet(

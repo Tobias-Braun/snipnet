@@ -6,6 +6,7 @@ import app.snipnet.shared.model.ScoreCurve
 import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SegmentSet
 import app.snipnet.shared.model.SegmentSetKind
+import app.snipnet.shared.store.PendingSave
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -131,6 +132,45 @@ class EditorSaveTest {
                 .second.editLog.size,
         )
     }
+
+    @Test
+    fun aDraftKeepsItsParentWhenTheNextStartIsOffline() {
+        sets = listOf(prediction(threeRallies), userSet("u2", threeRallies))
+        holder().also {
+            it.splitAt(10_000)
+            it.close()
+        }
+        assertEquals("u2", store.get("p1")?.baseSetId)
+
+        sets = emptyList()
+        val reopened = holder()
+        reopened.perform(EditorCommand.Save)
+
+        assertEquals(
+            "u2",
+            server.uploads
+                .single()
+                .second.parentSetId,
+        )
+    }
+
+    @Test
+    fun aSaveQueuedWithoutAParentIsSentWithTheNewestSetAsParent() =
+        runTest {
+            store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            store.setPendingSave("p1", PendingSave(null, threeRallies, emptyList(), isFinal = false))
+            server.sets = listOf(prediction(threeRallies), userSet("u1", threeRallies))
+
+            assertTrue(queue.flush("p1") is FlushResult.Saved)
+
+            assertEquals(
+                "u1",
+                server.uploads
+                    .single()
+                    .second.parentSetId,
+            )
+            assertNull(store.get("p1")?.pendingSave)
+        }
 
     @Test
     fun markAsFinalSavesTheSetAsFinalEvenWithoutEdits() {

@@ -79,7 +79,7 @@ class AppContainer(
      * open editor, so a save queued while offline still goes out after the editor was closed.
      */
     val saveQueue: SaveQueue by lazy {
-        SaveQueue(projectStore) { remoteVideoId, save ->
+        SaveQueue(projectStore, loadSets = api::listSegmentSets) { remoteVideoId, save ->
             api.createSegmentSet(remoteVideoId, save.parentSetId, save.segments, save.editLog, save.isFinal)
         }
     }

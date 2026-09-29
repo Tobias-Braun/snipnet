@@ -118,20 +118,16 @@ class EditorStateHolder(
             val draft = project.draftSegments
             val timeline =
                 Timeline.fromSegments(duration, sanitizeSegments(duration, draft ?: baseline?.segments ?: emptyList()))
+            val baseSetId = if (draft != null) project.baseSetId ?: baseline?.id else baseline?.id ?: project.baseSetId
+            // Stored right away, so a draft edited in this session still knows its parent when the next start is offline.
+            if (baseSetId != null && baseSetId != project.baseSetId) projectStore.setBaseSetId(projectId, baseSetId)
             update {
                 it.copy(
                     loading = false,
                     history = EditHistory(timeline),
                     info = opened.info,
                     scores = prediction?.scores,
-                    baseSetId =
-                        if (draft !=
-                            null
-                        ) {
-                            project.baseSetId ?: baseline?.id
-                        } else {
-                            baseline?.id ?: project.baseSetId
-                        },
+                    baseSetId = baseSetId,
                     priorEditLog = if (draft != null) project.draftEditLog else emptyList(),
                     savedSegments = baseline?.let { sanitizeSegments(duration, it.segments) },
                     queued = project.pendingSave != null,
@@ -287,10 +283,15 @@ class EditorStateHolder(
         val timeline = current.timeline ?: return
         if (current.saving) return
         persistDraft()
-        projectStore.setPendingSave(
-            projectId,
-            PendingSave(current.baseSetId, timeline.toApiSegments(), current.editLog, markFinal),
-        )
+        try {
+            projectStore.setPendingSave(
+                projectId,
+                PendingSave(current.baseSetId, timeline.toApiSegments(), current.editLog, markFinal),
+            )
+        } catch (e: Exception) {
+            update { it.copy(syncError = "Could not queue the save on this computer: ${e.message}") }
+            return
+        }
         update { it.copy(queued = true, syncError = null) }
         scope.launch { flushQueuedSave() }
     }

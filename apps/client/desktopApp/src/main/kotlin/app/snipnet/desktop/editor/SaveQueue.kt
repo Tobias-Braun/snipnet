@@ -3,8 +3,10 @@ package app.snipnet.desktop.editor
 import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.model.EditOp
 import app.snipnet.shared.model.SegmentSet
+import app.snipnet.shared.model.SegmentSetKind
 import app.snipnet.shared.store.PendingSave
 import app.snipnet.shared.store.ProjectStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -42,10 +44,15 @@ sealed interface FlushResult {
  * else, so a save queued in an editor that has since been closed still goes out once the API is reachable again.
  * A single mutex keeps two flushes from posting the same save twice.
  *
+ * @param loadSets fetches all segment sets of a remote video, oldest first. It is only called for a save queued
+ *   without a parent (the editor started offline from a draft whose base set was never stored), because the server
+ *   requires `parentSetId`; the newest user set, else the prediction, then stands in for the set the edits started
+ *   from.
  * @param upload posts a save as a new user segment set of the remote video.
  */
 class SaveQueue(
     private val store: ProjectStore,
+    private val loadSets: suspend (remoteVideoId: String) -> List<SegmentSet>,
     private val upload: suspend (remoteVideoId: String, save: PendingSave) -> SegmentSet,
 ) {
     private val mutex = Mutex()
@@ -69,7 +76,8 @@ class SaveQueue(
                 project.remoteVideoId
                     ?: return@withLock FlushResult.Offline("The video is not uploaded yet.")
             try {
-                val created = upload(remoteId, save)
+                val parentSetId = save.parentSetId ?: latestSetId(remoteId)
+                val created = upload(remoteId, save.copy(parentSetId = parentSetId))
                 val saved = FlushResult.Saved(created, store.markSaved(projectId, created.id, save))
                 onSaved(saved)
                 saved
@@ -80,8 +88,19 @@ class SaveQueue(
                     rejected += projectId
                     FlushResult.Rejected(e.message.orEmpty())
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A local store failure; retrying on a timer could post the same save again, so it waits for the user.
+                rejected += projectId
+                FlushResult.Rejected("Could not update the local project: ${e.message}")
             }
         }
+
+    private suspend fun latestSetId(remoteVideoId: String): String? {
+        val sets = loadSets(remoteVideoId)
+        return (sets.lastOrNull { it.kind == SegmentSetKind.USER } ?: sets.lastOrNull())?.id
+    }
 
     /** While an editor is open for [projectId] it retries by itself, so the background loop leaves the project alone. */
     fun attach(projectId: String) {

@@ -82,11 +82,13 @@ fun newStore(): ProjectStore = ProjectStore(openInMemoryDatabase(), newId = { "p
 
 /**
  * Stands in for `POST /v1/videos/:id/segment-sets`: records accepted saves and answers them with a user set whose id
- * is `user-<n>`. Set [failure] to make every upload throw it, like an unreachable or refusing server.
+ * is `user-<n>`. Set [failure] to make every upload throw it, like an unreachable or refusing server. [sets] is what
+ * `GET /v1/videos/:id/segment-sets` returns to the queue when it has to look up a missing parent.
  */
 class FakeSegmentSetServer {
     val uploads = mutableListOf<Pair<String, PendingSave>>()
     var failure: ApiError? = null
+    var sets: List<SegmentSet> = emptyList()
 
     suspend fun upload(
         remoteVideoId: String,
@@ -113,7 +115,7 @@ class FakeSegmentSetServer {
 fun newQueue(
     store: ProjectStore,
     server: FakeSegmentSetServer = FakeSegmentSetServer(),
-) = SaveQueue(store, server::upload)
+) = SaveQueue(store, loadSets = { server.sets }, upload = server::upload)
 
 fun prediction(
     segments: List<Segment>,

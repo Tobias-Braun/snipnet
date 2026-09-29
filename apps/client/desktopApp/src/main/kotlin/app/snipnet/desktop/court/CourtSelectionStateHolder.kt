@@ -6,6 +6,7 @@ import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.video.VideoPlayer
 import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.model.Court
+import app.snipnet.shared.model.CourtSuggestion
 import app.snipnet.shared.model.Point
 import app.snipnet.shared.model.Roi
 import app.snipnet.shared.store.ProjectStore
@@ -22,6 +23,8 @@ import java.nio.file.Path
  * @property roi the court rectangle; set together with the net point and adjustable afterwards.
  * @property loadError why the frame preview is unavailable (unknown project, unreadable file).
  * @property saveError why the last save failed; the court is still stored locally in that case.
+ * @property prefilledFromDetection whether [netPoint] and [roi] come from automatic net detection and still await the
+ *   user's confirmation; cleared as soon as the user changes either.
  */
 data class CourtSelectionState(
     val loading: Boolean = true,
@@ -33,6 +36,7 @@ data class CourtSelectionState(
     val roi: Roi? = null,
     val saving: Boolean = false,
     val saveError: String? = null,
+    val prefilledFromDetection: Boolean = false,
 ) {
     val canSave: Boolean get() = netPoint != null && roi != null && !saving
 }
@@ -47,6 +51,9 @@ data class CourtSelectionState(
  *
  * @param projectId the local project id carried by `Screen.CourtSelection`.
  * @param uploadCourt `PUT /v1/videos/:id/court`, called with the remote video id.
+ * @param loadSuggestion fetches the server's automatic court suggestion for a remote video id (`Video.courtSuggestion`
+ *   in `docs/api.md`). It is used only for projects without a saved court and only applied at high confidence; any
+ *   [ApiError] is ignored because a missing suggestion just means the user marks the court by hand.
  * @param onSaved called after a successful save.
  */
 class CourtSelectionStateHolder(
@@ -55,6 +62,7 @@ class CourtSelectionStateHolder(
     private val engine: VideoEngine,
     private val uploadCourt: suspend (remoteVideoId: String, court: Court) -> Unit,
     private val onSaved: () -> Unit,
+    private val loadSuggestion: suspend (remoteVideoId: String) -> CourtSuggestion? = { null },
     dispatcher: CoroutineDispatcher = Dispatchers.Main,
 ) : StateHolder<CourtSelectionState>(CourtSelectionState(), dispatcher) {
     private var player: VideoPlayer? = null
@@ -93,9 +101,36 @@ class CourtSelectionStateHolder(
             }
             scope.launch { opened.frames.collect { frame -> update { it.copy(frame = frame) } } }
             scrubTo(opened.info.durationMs / INITIAL_POSITION_DIVISOR, exact = true)
+            val remoteId = project.remoteVideoId
+            if (existing == null && remoteId != null) scope.launch { prefill(remoteId) }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             update { it.copy(loading = false, loadError = "Could not open the video: ${e.message}") }
+        }
+    }
+
+    /**
+     * Pre-fills net and ROI from the server's suggestion when it is confident enough. The user may already have
+     * clicked the net while the request was in flight; that choice always wins.
+     */
+    private suspend fun prefill(remoteVideoId: String) {
+        val suggestion =
+            try {
+                loadSuggestion(remoteVideoId)
+            } catch (e: ApiError) {
+                null
+            }
+        if (suggestion == null || !suggestion.isHighConfidence) return
+        update {
+            if (it.netPoint != null || it.roi != null) {
+                it
+            } else {
+                it.copy(
+                    netPoint = suggestion.court.netPoint,
+                    roi = suggestion.court.roi,
+                    prefilledFromDetection = true,
+                )
+            }
         }
     }
 
@@ -116,18 +151,22 @@ class CourtSelectionStateHolder(
     fun setNetPoint(point: Point) =
         update {
             val roi = if (roiAdjusted && it.roi != null) it.roi else CourtGeometry.defaultRoi(point)
-            it.copy(netPoint = point, roi = roi, saveError = null)
+            // A pre-filled ROI is not the user's own work, so a new net click may replace it like the default one.
+            it.copy(netPoint = point, roi = roi, saveError = null, prefilledFromDetection = false)
         }
 
     fun setRoi(roi: Roi) {
         roiAdjusted = true
-        update { it.copy(roi = roi, saveError = null) }
+        update { it.copy(roi = roi, saveError = null, prefilledFromDetection = false) }
     }
 
     /** Restores the default ROI around the current net point. */
     fun resetRoi() {
         roiAdjusted = false
-        update { current -> current.netPoint?.let { current.copy(roi = CourtGeometry.defaultRoi(it)) } ?: current }
+        update { current ->
+            current.netPoint?.let { current.copy(roi = CourtGeometry.defaultRoi(it), prefilledFromDetection = false) }
+                ?: current
+        }
     }
 
     fun save() {

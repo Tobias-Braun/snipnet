@@ -90,6 +90,7 @@ class AppContainer(
         videoEngine,
         uploadCourt = { remoteVideoId, court -> api.putCourt(remoteVideoId, court) },
         onSaved = onSaved,
+        loadSuggestion = { remoteVideoId -> api.getVideo(remoteVideoId).courtSuggestion },
     )
 
     /** Ends the session and returns to the login screen with an empty back stack. */

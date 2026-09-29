@@ -95,10 +95,27 @@ data class Video(
     val proxySizeBytes: Long,
     val status: VideoStatus,
     val court: Court?,
+    /** The detector's proposal for [court]; absent until the server has analyzed the proxy or found no net. */
+    val courtSuggestion: CourtSuggestion? = null,
     val createdAt: String,
     val updatedAt: String,
     val latestJob: Job?,
 )
+
+/** A court found by automatic net detection together with how sure the detector is, `0..1`. */
+@Serializable
+data class CourtSuggestion(
+    val court: Court,
+    val confidence: Double,
+) {
+    /** Whether the client may pre-fill the court selection with this suggestion without asking first. */
+    val isHighConfidence: Boolean get() = confidence >= HIGH_CONFIDENCE
+
+    companion object {
+        /** Mirrors `HIGH_CONFIDENCE` in `snipnet_ml.court_detect`; see `docs/api.md`. */
+        const val HIGH_CONFIDENCE = 0.7
+    }
+}
 
 @Serializable
 enum class SegmentLabel {

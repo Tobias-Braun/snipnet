@@ -34,10 +34,11 @@ describe('POST /v1/waitlist', () => {
     await schema.drop();
   });
 
-  async function newApp(rateLimitMax = 100) {
+  async function newApp(rateLimitMax = 100, trustProxy: false | string = false) {
     app = await buildApp({
       config: {
         ...schema.config,
+        trustProxy,
         webOrigins: [WEB_ORIGIN],
         waitlistRateLimit: { max: rateLimitMax, windowMs: 60_000 },
       },
@@ -121,6 +122,28 @@ describe('POST /v1/waitlist', () => {
       remoteAddress: '203.0.113.7',
     });
     expect(otherIp.statusCode).toBe(202);
+  });
+
+  it('behind a trusted proxy, limits by the address the proxy appended, not a client-forged one', async () => {
+    // Injected requests come from 127.0.0.1, which plays the reverse proxy here.
+    await newApp(2, '127.0.0.1');
+
+    // A proxy like nginx appends the peer address, so the client controls every entry left of the last one.
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const response = await signUp(
+        { email: `p${String(i)}@example.com` },
+        { 'x-forwarded-for': `10.9.9.${String(i)}, 198.51.100.4` },
+      );
+      statuses.push(response.statusCode);
+    }
+    const otherClient = await signUp(
+      { email: 'q@example.com' },
+      { 'x-forwarded-for': '10.9.9.0, 198.51.100.5' },
+    );
+
+    expect(statuses).toEqual([202, 202, 429]);
+    expect(otherClient.statusCode).toBe(202);
   });
 
   describe('CORS', () => {

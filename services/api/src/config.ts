@@ -22,8 +22,11 @@ export interface AppConfig {
   secrets: { jwt: string; internalToken: string; adminToken: string };
   /** Origins of the landing page that may call the public endpoints cross-origin; empty disables CORS. */
   webOrigins: string[];
-  /** Read the client IP from `X-Forwarded-For`; only enable behind a reverse proxy that sets it. */
-  trustProxy: boolean;
+  /**
+   * Which proxies may set the client IP via `X-Forwarded-For`: `false` (none) or a comma separated list of proxy
+   * addresses, CIDRs or proxy-addr names such as `loopback` and `uniquelocal`, passed to Fastify's `trustProxy`.
+   */
+  trustProxy: false | string;
   /** Per-IP limit of the unauthenticated waitlist endpoint. */
   waitlistRateLimit: { max: number; windowMs: number };
 }
@@ -64,7 +67,15 @@ const envSchema = z.object({
   INTERNAL_TOKEN: secret,
   ADMIN_TOKEN: secret,
   WEB_ORIGIN: z.string().optional(),
-  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  // `true` is refused on purpose: Fastify would then take the left-most X-Forwarded-For entry, which the client
+  // writes itself when a proxy appends to the header, so anyone could evade the per-IP rate limit. Hop counts are
+  // refused because Fastify ignores them (it cannot verify the immediate peer that way).
+  TRUST_PROXY: z
+    .string()
+    .refine((value) => value !== 'true' && !/^\d+$/.test(value), {
+      message: 'must be false or the proxy addresses/CIDRs; true or a hop count would not identify the proxy',
+    })
+    .default('false'),
   WAITLIST_RATE_LIMIT_MAX: positiveInt.default(10),
   WAITLIST_RATE_LIMIT_WINDOW_SECONDS: positiveInt.default(60),
 });
@@ -105,7 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .split(',')
       .map((origin) => origin.trim().replace(/\/+$/, ''))
       .filter((origin) => origin !== ''),
-    trustProxy: values.TRUST_PROXY === 'true',
+    trustProxy: values.TRUST_PROXY === 'false' ? false : values.TRUST_PROXY,
     waitlistRateLimit: {
       max: values.WAITLIST_RATE_LIMIT_MAX,
       windowMs: values.WAITLIST_RATE_LIMIT_WINDOW_SECONDS * 1000,

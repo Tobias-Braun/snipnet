@@ -85,16 +85,20 @@ describe('loadConfig', () => {
     const config = loadConfig({
       ...required,
       WEB_ORIGIN: 'https://snipnet.app/, http://localhost:8080',
-      TRUST_PROXY: 'true',
+      TRUST_PROXY: '10.0.0.0/8, loopback',
       WAITLIST_RATE_LIMIT_MAX: '3',
       WAITLIST_RATE_LIMIT_WINDOW_SECONDS: '30',
     });
 
     expect(config).toMatchObject({
       webOrigins: ['https://snipnet.app', 'http://localhost:8080'],
-      trustProxy: true,
+      trustProxy: '10.0.0.0/8, loopback',
       waitlistRateLimit: { max: 3, windowMs: 30_000 },
     });
+  });
+
+  it.each(['true', '1'])('refuses TRUST_PROXY=%s, which would not pin down the trusted proxy', (value) => {
+    expect(() => loadConfig({ ...required, TRUST_PROXY: value })).toThrow(/TRUST_PROXY/);
   });
 
   it.each(['0', 'abc', '-2'])('rejects WAITLIST_RATE_LIMIT_MAX=%s', (value) => {

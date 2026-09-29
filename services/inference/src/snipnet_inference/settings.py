@@ -12,6 +12,7 @@ class Settings:
     internal_token: str
     worker_id: str
     poll_interval_s: float
+    model: str
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> "Settings":
@@ -24,7 +25,7 @@ class Settings:
         if not token:
             raise ValueError("INTERNAL_TOKEN must be set")
 
-        raw_interval = env.get("WORKER_POLL_INTERVAL_S", "2")
+        raw_interval = env.get("WORKER_POLL_INTERVAL_S") or env.get("POLL_INTERVAL_S") or "2"
         try:
             poll_interval_s = float(raw_interval)
         except ValueError:
@@ -38,4 +39,5 @@ class Settings:
             internal_token=token,
             worker_id=env.get("WORKER_ID") or socket.gethostname(),
             poll_interval_s=poll_interval_s,
+            model=env.get("MODEL") or "dummy-v0",
         )

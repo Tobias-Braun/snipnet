@@ -19,6 +19,11 @@ export const openapiPlugin = fp<{ version: string }>(
               scheme: 'bearer',
               description: 'Shared INTERNAL_TOKEN of the worker.',
             },
+            adminToken: {
+              type: 'http',
+              scheme: 'bearer',
+              description: 'Shared ADMIN_TOKEN of the operator.',
+            },
           },
         },
       },

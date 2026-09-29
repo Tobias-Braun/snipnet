@@ -1,11 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema, insertVideo, SEED_DURATION_MS as DURATION_MS } from './helpers/seed.js';
 
-const DURATION_MS = 90_000;
 const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
 
 interface SegmentSetBody {
@@ -29,13 +27,7 @@ describe('segment set routes', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
     app = await buildApp({ config: schema.config });
   });
 
@@ -58,25 +50,14 @@ describe('segment set routes', () => {
   /** A video with a prediction set, inserted directly so the tests do not depend on uploads and the worker. */
   async function seedVideo(userId: string): Promise<{ videoId: string; predictionId: string }> {
     counter += 1;
-    const video = await app.db
-      .insertInto('videos')
-      .values({
-        user_id: userId,
-        filename: 'match.mov',
-        duration_ms: DURATION_MS,
-        width: 854,
-        height: 480,
-        fps: 15,
-        proxy_size_bytes: 2048,
-        status: 'analyzed',
-        object_key: `proxies/${userId}/set-${String(counter)}.mp4`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const videoId = await insertVideo(app.db, {
+      user_id: userId,
+      object_key: `proxies/${userId}/set-${String(counter)}.mp4`,
+    });
     const prediction = await app.db
       .insertInto('segment_sets')
       .values({
-        video_id: video.id,
+        video_id: videoId,
         kind: 'prediction',
         model_version: 'heuristic-1',
         segments: JSON.stringify([{ startMs: 1000, endMs: 9000, label: 'rally', confidence: 0.9 }]),
@@ -84,7 +65,7 @@ describe('segment set routes', () => {
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    return { videoId: video.id, predictionId: prediction.id };
+    return { videoId, predictionId: prediction.id };
   }
 
   async function save(auth: Auth, videoId: string, payload: unknown) {

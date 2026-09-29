@@ -17,6 +17,9 @@ export const UPLOAD_URL_TTL_SECONDS = 60 * 60;
 /** How long a presigned download URL for the inference worker stays valid. */
 export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60;
 
+/** How long a presigned proxy URL in the training export stays valid; a training run downloads them in bulk. */
+export const EXPORT_URL_TTL_SECONDS = 24 * 60 * 60;
+
 /** The only content type proxies are uploaded with; it is part of the signature, so clients cannot vary it. */
 export const PROXY_CONTENT_TYPE = 'video/mp4';
 
@@ -37,6 +40,11 @@ export interface Storage {
    * next to the API, so it is signed for the internal endpoint rather than the public one.
    */
   presignDownload: (key: string) => Promise<string>;
+  /**
+   * Presigned GET for `key`, valid for `EXPORT_URL_TTL_SECONDS`. Unlike `presignDownload` it is signed for the
+   * public endpoint, because the training pipeline fetches proxies from outside the Compose network.
+   */
+  presignExportDownload: (key: string) => Promise<string>;
   /** Size of the stored object in bytes, or `null` when the key does not exist. */
   objectSize: (key: string) => Promise<number | null>;
   /** Removes the object; deleting a key that does not exist is not an error. */
@@ -103,6 +111,11 @@ export function createStorage(config: S3Config): Storage & { close: () => void }
       // In Compose the public endpoint is `localhost` on the host, which the worker container cannot reach; the
       // internal endpoint (`http://minio:9000`) is reachable from both the API and the worker.
       return getSignedUrl(internal, command, { expiresIn: DOWNLOAD_URL_TTL_SECONDS });
+    },
+
+    async presignExportDownload(key) {
+      const command = new GetObjectCommand({ Bucket: config.bucket, Key: key });
+      return getSignedUrl(signer, command, { expiresIn: EXPORT_URL_TTL_SECONDS });
     },
 
     async objectSize(key) {

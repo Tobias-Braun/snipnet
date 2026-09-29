@@ -35,6 +35,8 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
+      # The synthetic fixture tests render and probe real video, so they need ffmpeg and ffprobe.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check

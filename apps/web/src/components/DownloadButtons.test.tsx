@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RELEASES_URL } from '../content.ts';
@@ -18,6 +18,19 @@ const fetchMock = vi.fn();
 function setPlatform(platform: string, userAgent: string) {
   vi.spyOn(navigator, 'platform', 'get').mockReturnValue(platform);
   vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(userAgent);
+}
+
+/**
+ * Waits until the mocked fetch has been called and its response has been fully
+ * processed, then flushes the resulting React state update. Asserting right
+ * after the call alone would check the initial fallback render, which would
+ * pass even if the component wrongly rendered an OS button after a failure.
+ */
+async function settleFetch() {
+  await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 beforeEach(() => {
@@ -65,7 +78,7 @@ describe('DownloadButtons', () => {
     fetchMock.mockResolvedValue(respond());
     render(<DownloadButtons />);
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await settleFetch();
     expect(screen.getByRole('link', { name: 'Download the latest release' })).toHaveAttribute(
       'href',
       RELEASES_URL,
@@ -77,10 +90,11 @@ describe('DownloadButtons', () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     render(<DownloadButtons />);
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await settleFetch();
     expect(screen.getByRole('link', { name: 'Download the latest release' })).toHaveAttribute(
       'href',
       RELEASES_URL,
     );
+    expect(screen.queryByRole('link', { name: 'macOS' })).not.toBeInTheDocument();
   });
 });

@@ -72,6 +72,12 @@ class ImportPipeline(
     private val tasks = mutableMapOf<String, TaskState>()
     private val jobs = mutableMapOf<String, kotlinx.coroutines.Job>()
     private val targets = mutableMapOf<String, UploadTarget>()
+
+    /**
+     * Every launched task until it has really ended. Unlike [jobs] this keeps a task that [remove] or [reset] already
+     * unregistered, whose coroutine may still be winding down, so [awaitTasksEnded] can wait for it.
+     */
+    private val liveTasks = mutableSetOf<kotlinx.coroutines.Job>()
     private var videos = mapOf<String, Video>()
     private var serverChecked = false
 
@@ -241,6 +247,14 @@ class ImportPipeline(
     }
 
     /**
+     * Suspends until every task launched so far has ended, including ones that [remove] already unregistered. Tests use
+     * it to assert that nothing happens after a removal instead of guessing a grace period.
+     */
+    internal suspend fun awaitTasksEnded() {
+        synchronized(lock) { liveTasks.toList() }.forEach { it.join() }
+    }
+
+    /**
      * Runs [work] as the task of [projectId] unless one is already running. Success clears the task, so the row falls
      * back to the server's status; failure and cancellation keep it with an error message, which is what enables the
      * retry button.
@@ -254,7 +268,11 @@ class ImportPipeline(
             synchronized(lock) {
                 if (jobs[projectId]?.isActive == true) return
                 tasks[projectId] = initial
-                scope.launch(start = CoroutineStart.LAZY) { runTask(projectId, work) }.also { jobs[projectId] = it }
+                scope.launch(start = CoroutineStart.LAZY) { runTask(projectId, work) }.also {
+                    jobs[projectId] = it
+                    liveTasks += it
+                    it.invokeOnCompletion { _ -> synchronized(lock) { liveTasks.remove(it) } }
+                }
             }
         publish()
         job.start()

@@ -1,0 +1,41 @@
+name: python
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ml/**
+      - services/inference/**
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - .github/workflows/python.yml
+  pull_request:
+    paths:
+      - ml/**
+      - services/inference/**
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - .github/workflows/python.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-uv publishes no floating major tag, so the release is pinned exactly.
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pytest

@@ -1,0 +1,96 @@
+# Local backend stack. Run from the repository root:
+#   sh infra/init-env.sh                          (creates infra/.env with random local secrets)
+#   docker compose -f infra/docker-compose.yml up -d
+# All variables are documented in infra/.env.example. Secrets have no defaults on purpose, so the stack never
+# runs with credentials that are published in this repository; `${VAR:?}` makes Compose abort with "required
+# variable VAR is missing a value" until infra/.env provides them.
+name: snipnet
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-snipnet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-snipnet}
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Upstream MinIO no longer publishes container images, so the stack uses Chainguard's build of the same
+  # server. It ships the `mc` client, which the health check uses against the unauthenticated health endpoint.
+  minio:
+    image: cgr.dev/chainguard/minio:latest
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-snipnet}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      MC_HOST_local: http://localhost:9000
+    ports:
+      - '127.0.0.1:${MINIO_API_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot job that creates the proxy bucket; `--ignore-existing` makes re-runs on `up` harmless.
+  # Credentials are passed as environment variables and expanded by bash inside the container ($$), so they
+  # never appear in the container's command line.
+  minio-init:
+    image: cgr.dev/chainguard/minio-client:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-snipnet}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      S3_BUCKET: ${S3_BUCKET:-snipnet-proxies}
+    entrypoint: ['bash', '-euc']
+    command:
+      - mc alias set minio http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null &&
+        mc mb --ignore-existing "minio/$$S3_BUCKET"
+    restart: 'no'
+
+  # The API and worker join the stack once their images exist (see the services/api and services/inference
+  # issues). Their configuration is already documented in infra/.env.example; inside the Compose network
+  # they reach Postgres at postgres:5432 and MinIO at http://minio:9000 instead of localhost.
+  #
+  # api:
+  #   build: ../services/api
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     minio-init:
+  #       condition: service_completed_successfully
+  #   env_file: .env
+  #   environment:
+  #     API_PORT: 3000
+  #     PGHOST: postgres
+  #     PGPORT: 5432
+  #     S3_ENDPOINT: http://minio:9000
+  #   ports:
+  #     - '127.0.0.1:${API_PORT:-3000}:3000'
+  #
+  # worker:
+  #   build:
+  #     context: ..
+  #     dockerfile: services/inference/Dockerfile
+  #   depends_on:
+  #     - api
+  #   env_file: .env
+  #   environment:
+  #     API_URL: http://api:3000
+
+volumes:
+  postgres-data:
+  minio-data:

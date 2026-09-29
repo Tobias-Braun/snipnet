@@ -29,7 +29,25 @@ class ProxyDownloadError(Exception):
 
 
 class LeaseLostError(Exception):
-    """The API answered 409: the job is no longer ours (lease expired and another worker reclaimed it)."""
+    """The API answered 409: the request was rejected and nothing was changed.
+
+    Usually the lease expired and another worker reclaimed the job, but the API also answers 409 on the result when
+    the proxy was replaced or removed after upload-complete. ``detail`` carries the message of the response's error
+    envelope so the log can tell those cases apart.
+    """
+
+    def __init__(self, message: str, detail: str | None = None) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+def error_message(response: httpx.Response) -> str | None:
+    """Extract ``error.message`` of the API error envelope, or None when the body is not one."""
+    try:
+        message = response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return message if isinstance(message, str) else None
 
 
 def parse_court(raw: dict[str, Any] | None) -> Court | None:
@@ -180,9 +198,10 @@ class Worker:
                 {"workerId": self._settings.worker_id, "attempt": attempt, **prediction_body(prediction)},
             )
             log.info("job %s succeeded", job_id)
-        except LeaseLostError:
-            # Another worker owns the job now, so reporting a failure would disturb its attempt. Just drop the job.
-            log.warning("job %s was reclaimed by another worker, dropping it", job_id)
+        except LeaseLostError as exc:
+            # The API already settled the job (reclaimed by another worker, or failed because the proxy changed), so
+            # reporting a failure would disturb it. Just drop the job and log why the API refused.
+            log.warning("job %s was rejected with 409, dropping it: %s", job_id, exc.detail or "no error body")
         except Exception as exc:
             log.exception("job %s failed", job_id)
             self._report_failure(job_id, attempt, exc)
@@ -256,5 +275,5 @@ class Worker:
         else:
             response = self._client.post(url, json=body, headers=self._headers())
         if response.status_code == 409:
-            raise LeaseLostError(f"{what or url} rejected with 409")
+            raise LeaseLostError(f"{what or url} rejected with 409", error_message(response))
         response.raise_for_status()

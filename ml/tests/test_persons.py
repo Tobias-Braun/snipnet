@@ -12,6 +12,7 @@ from snipnet_ml.persons import (
     PersonFrame,
     TorchvisionPersonDetector,
     TrackedPerson,
+    box_iou,
     extract_person_features,
     person_features,
     select_device,
@@ -49,6 +50,50 @@ def test_tracker_keeps_ids_for_overlapping_boxes_and_starts_new_ones() -> None:
     second = tracker.update([(0.51, 0.5, 0.61, 0.7), (0.01, 0.0, 0.11, 0.2), (0.9, 0.1, 1.0, 0.3)])
     assert [p.track_id for p in second[:2]] == [first[1].track_id, first[0].track_id]
     assert second[2].track_id not in {first[0].track_id, first[1].track_id}
+
+
+def test_tracker_keeps_the_id_of_a_box_that_moves_more_than_its_width() -> None:
+    tracker = IouTracker(match_iou=0.2, max_missed=1)
+    # A 0.1 wide, 0.3 high box jumps 0.25 sideways: no overlap at all, but well inside one box height.
+    first = tracker.update([(0.1, 0.1, 0.2, 0.4)])
+    second = tracker.update([(0.35, 0.1, 0.45, 0.4)])
+    assert box_iou((0.1, 0.1, 0.2, 0.4), (0.35, 0.1, 0.45, 0.4)) == 0.0
+    assert second[0].track_id == first[0].track_id
+
+
+def test_tracker_does_not_link_boxes_further_apart_than_the_foot_gate() -> None:
+    tracker = IouTracker(match_iou=0.2, max_missed=1, foot_gate=1.0)
+    first = tracker.update([(0.1, 0.1, 0.2, 0.4)])
+    second = tracker.update([(0.6, 0.1, 0.7, 0.4)])
+    assert second[0].track_id != first[0].track_id
+
+
+def test_tracker_foot_gate_uses_isotropic_distance_and_can_be_disabled() -> None:
+    # A normalized x shift of 0.2 is 0.67 heights of the 0.3 high box on a square frame, but on a 2:1 frame it
+    # equals 0.4 frame heights, which is more than one box height.
+    moved = (0.3, 0.1, 0.4, 0.4)
+    square = IouTracker(foot_gate=1.0, aspect=1.0)
+    first = square.update([(0.1, 0.1, 0.2, 0.4)])
+    assert square.update([moved])[0].track_id == first[0].track_id
+    wide = IouTracker(foot_gate=1.0, aspect=2.0)
+    first = wide.update([(0.1, 0.1, 0.2, 0.4)])
+    assert wide.update([moved])[0].track_id != first[0].track_id
+    off = IouTracker(foot_gate=0.0)
+    first = off.update([(0.1, 0.1, 0.2, 0.4)])
+    assert off.update([moved])[0].track_id != first[0].track_id
+
+
+def test_tracker_prefers_iou_matches_over_foot_distance_matches() -> None:
+    tracker = IouTracker(match_iou=0.2, max_missed=1)
+    first = tracker.update([(0.3, 0.1, 0.4, 0.4)])
+    # The small box has exactly the track's foot point but hardly overlaps it; the shifted full-size box has a
+    # slightly larger foot distance but a high IoU. Foot distance alone would pick the small box.
+    small = (0.34, 0.3, 0.36, 0.4)
+    shifted = (0.33, 0.1, 0.43, 0.4)
+    assert box_iou(first[0].box, small) < 0.2 <= box_iou(first[0].box, shifted)
+    second = tracker.update([small, shifted])
+    assert second[1].track_id == first[0].track_id
+    assert second[0].track_id != first[0].track_id
 
 
 def test_tracker_drops_tracks_after_too_many_missed_frames() -> None:

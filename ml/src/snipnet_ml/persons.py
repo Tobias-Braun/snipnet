@@ -3,8 +3,9 @@
 Frames are decoded at a low rate (2.5 fps by default; a person moves little in 0.4 s and the detector is by far
 the most expensive step), cropped to the expanded court ROI and passed to a torchvision COCO detector. Only
 detections whose foot point (bottom center of the box) lies inside the ROI, grown by a small margin, are kept, so
-players on neighbouring courts that merely overlap the crop are dropped. A greedy IoU tracker links the
-detections of consecutive frames into tracks, which is what makes a per-person speed possible.
+players on neighbouring courts that merely overlap the crop are dropped. A greedy tracker (IoU, then foot-point
+distance for fast movers) links the detections of consecutive frames into tracks, which is what makes a
+per-person speed possible.
 
 All coordinates handed out by this module are normalized to the full video frame (origin top left). Distances
 and speeds are measured in units of the frame height, so they are isotropic even though the frame is wider than
@@ -53,6 +54,10 @@ class PersonConfig:
     score_threshold: float = 0.5
     # Minimum IoU between a track's last box and a detection to link them.
     match_iou: float = 0.2
+    # Second association pass for tracks the IoU pass left unmatched: a detection whose foot point lies within
+    # this many box heights of the track's last foot point still continues the track. At 2.5 fps a sprinting
+    # player moves further than their own width between frames, so the boxes no longer overlap. 0 disables it.
+    foot_gate: float = 1.0
     # A track survives this many analysis frames without a matching detection.
     max_missed: int = 2
 
@@ -63,6 +68,8 @@ class PersonConfig:
             raise ValueError("roi_expand and foot_margin must not be negative")
         if not 0 <= self.score_threshold <= 1 or not 0 <= self.match_iou <= 1:
             raise ValueError("score_threshold and match_iou must lie in [0, 1]")
+        if self.foot_gate < 0:
+            raise ValueError("foot_gate must not be negative")
         if self.max_missed < 0:
             raise ValueError("max_missed must not be negative")
 
@@ -184,37 +191,70 @@ class _Track:
 
 
 class IouTracker:
-    """Greedy IoU tracker: highest-overlap pairs are matched first, unmatched detections start new tracks.
+    """Greedy tracker: IoU pairs are matched first, then leftovers by foot-point distance.
 
-    Roundnet players stand apart and move slowly relative to the analysis rate, so plain IoU association
-    without motion prediction or appearance features is enough for the coarse speed feature.
+    The IoU pass links slow movers. Because frames are 0.4 s apart, a fast player's boxes may not overlap at
+    all, so a second greedy pass matches the still unmatched tracks and detections by the distance between
+    their foot points, gated relative to the track's box height (`foot_gate`). Unmatched detections start new
+    tracks. No appearance features are used, which is enough for the coarse speed feature.
+
+    `aspect` (frame width / height) converts the normalized x axis to the same unit as y, so the distance is
+    isotropic; it is only relevant to the foot-distance pass.
     """
 
-    def __init__(self, match_iou: float = 0.2, max_missed: int = 2) -> None:
+    def __init__(
+        self, match_iou: float = 0.2, max_missed: int = 2, foot_gate: float = 1.0, aspect: float = 1.0
+    ) -> None:
         self.match_iou = match_iou
         self.max_missed = max_missed
+        self.foot_gate = foot_gate
+        self.aspect = aspect
         self._tracks: list[_Track] = []
         self._next_id = 0
 
+    def _foot_distance(self, a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+        dx = ((a[0] + a[2]) / 2 - (b[0] + b[2]) / 2) * self.aspect
+        return math.hypot(dx, a[3] - b[3])
+
+    def _iou_candidates(self, boxes: list[tuple[float, float, float, float]]) -> list[tuple[float, int, int]]:
+        """`(-iou, track, box)` triples of all pairs overlapping enough, best overlap first."""
+        return sorted(
+            (-iou, ti, bi)
+            for ti, track in enumerate(self._tracks)
+            for bi, box in enumerate(boxes)
+            if (iou := box_iou(track.box, box)) >= self.match_iou
+        )
+
+    def _foot_candidates(
+        self, boxes: list[tuple[float, float, float, float]], free_tracks: set[int]
+    ) -> list[tuple[float, int, int]]:
+        """`(distance / track box height, track, box)` triples within the foot gate, closest first."""
+        found = []
+        for ti in free_tracks:
+            track = self._tracks[ti]
+            height = track.box[3] - track.box[1]
+            if height <= 0:
+                continue
+            for bi, box in enumerate(boxes):
+                relative = self._foot_distance(track.box, box) / height
+                if relative <= self.foot_gate:
+                    found.append((relative, ti, bi))
+        return sorted(found)
+
     def update(self, boxes: list[tuple[float, float, float, float]]) -> list[TrackedPerson]:
         """Assign track ids to `boxes` of the next frame, in the order the boxes were given."""
-        candidates = sorted(
-            (
-                (iou, ti, bi)
-                for ti, track in enumerate(self._tracks)
-                for bi, box in enumerate(boxes)
-                if (iou := box_iou(track.box, box)) >= self.match_iou
-            ),
-            key=lambda item: item[0],
-            reverse=True,
-        )
         used_tracks: set[int] = set()
         assigned: dict[int, _Track] = {}
-        for _, ti, bi in candidates:
-            if ti in used_tracks or bi in assigned:
-                continue
-            used_tracks.add(ti)
-            assigned[bi] = self._tracks[ti]
+
+        def match(candidates: list[tuple[float, int, int]]) -> None:
+            for _, ti, bi in candidates:
+                if ti not in used_tracks and bi not in assigned:
+                    used_tracks.add(ti)
+                    assigned[bi] = self._tracks[ti]
+
+        match(self._iou_candidates(boxes))
+        if self.foot_gate > 0:
+            match(self._foot_candidates(boxes, set(range(len(self._tracks))) - used_tracks))
 
         for ti, track in enumerate(self._tracks):
             if ti not in used_tracks:
@@ -266,10 +306,12 @@ def track_persons(
     coordinates and dropped unless their foot point is inside the ROI.
     """
     config = config or PersonConfig()
-    tracker = IouTracker(config.match_iou, config.max_missed)
     result: list[PersonFrame] = []
+    tracker: IouTracker | None = None
     for time_s, frame in frames:
         height, width = frame.shape[:2]
+        if tracker is None:
+            tracker = IouTracker(config.match_iou, config.max_missed, config.foot_gate, width / height)
         x0, y0, x1, y1 = expanded_pixel_box(roi, config.roi_expand, width, height)
         boxes = []
         for detection in detector.detect(frame[y0:y1, x0:x1]):

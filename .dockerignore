@@ -1,0 +1,42 @@
+# Shared build context for the api, web and worker images (all built from the repository root, see
+# infra/docker-compose.yml). The api image has its own services/api/Dockerfile.dockerignore, which BuildKit
+# prefers over this file for that build.
+
+.git
+.claude
+
+# Dependency directories and caches are reinstalled inside the image; sending host copies only slows the build
+# and can shadow the in-image install.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.gradle
+**/.kotlin
+**/build
+**/dist
+**/coverage
+**/.pytest_cache
+**/.ruff_cache
+
+# Local footage, datasets and model weights must never reach the daemon. The ml CLIs write datasets to data/ and
+# models to a directory of the user's choice relative to where they run, which can be inside ml/, and the worker
+# image copies ml/ wholesale, so these are matched at any depth rather than only at the root. The worker gets its
+# trained model through MODEL_DIR at runtime, never from the image.
+**/data
+**/*.mp4
+**/*.mov
+**/*.mkv
+**/*.m4v
+**/*.pt
+**/*.pth
+**/*.onnx
+
+# Local env files hold secrets. The worker and web images copy whole service directories, so a stray .env there
+# would otherwise be baked into the image.
+**/.env
+**/.env.*
+!**/.env.example
+
+# apps/client is the Kotlin Multiplatform app and no image needs it. apps/web is not excluded because
+# apps/web/Dockerfile copies it from this same context.
+apps/client

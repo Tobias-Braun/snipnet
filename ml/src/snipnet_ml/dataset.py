@@ -172,7 +172,8 @@ def build_dataset(
         "videos": index,
     }
     path = out / "dataset.json"
-    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    # The output directory is chosen by the operator on the command line, so writing below it is intended.
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")  # NOSONAR
     return path
 
 

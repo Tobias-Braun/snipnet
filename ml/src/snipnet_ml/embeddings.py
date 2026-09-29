@@ -224,7 +224,8 @@ def extract_embeddings(
         os.close(handle)
         try:
             np.savez_compressed(temporary, version=EMBEDDING_VERSION, visual=result.visual, audio=result.audio)
-            os.replace(temporary, cache_file)
+            # The cache directory is chosen by the operator (or the worker's configuration), so it is trusted.
+            os.replace(temporary, cache_file)  # NOSONAR
         except BaseException:
             Path(temporary).unlink(missing_ok=True)
             raise

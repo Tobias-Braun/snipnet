@@ -1,6 +1,7 @@
 package app.snipnet.desktop.editor
 
 import androidx.compose.ui.graphics.ImageBitmap
+import app.snipnet.desktop.export.ExportUiState
 import app.snipnet.desktop.video.VideoInfo
 import app.snipnet.desktop.video.Waveform
 import app.snipnet.shared.editing.EditHistory
@@ -28,6 +29,7 @@ enum class SegmentEdge { Start, End }
  * @property thumbnails decoded timeline thumbnails by index, evenly spread over the video in [thumbnailCount] slices.
  * @property snapGuideMs the time a trim drag is currently snapped to, drawn as a guide line.
  * @property saveError why the draft could not be stored locally; editing continues in memory.
+ * @property export the export dialog and the export in progress.
  */
 data class EditorState(
     val loading: Boolean = true,
@@ -48,6 +50,7 @@ data class EditorState(
     val thumbnailCount: Int = 0,
     val snapGuideMs: Long? = null,
     val saveError: String? = null,
+    val export: ExportUiState = ExportUiState(),
 ) {
     val timeline: Timeline? get() = history?.timeline
 

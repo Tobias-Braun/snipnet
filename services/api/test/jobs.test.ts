@@ -534,6 +534,10 @@ describe('job routes', () => {
       const { jobId } = await takeOver();
 
       expect((await post(`/internal/jobs/${jobId}/progress`, { progress: 0.9 })).statusCode).toBe(409);
+      // The current attempt alone is not enough: the report must also come from the worker holding the lease.
+      expect((await post(`/internal/jobs/${jobId}/progress`, { attempt: 2, progress: 0.9 })).statusCode).toBe(
+        409,
+      );
       expect(
         (await post(`/internal/jobs/${jobId}/fail`, { error: 'late', retryable: false })).statusCode,
       ).toBe(409);

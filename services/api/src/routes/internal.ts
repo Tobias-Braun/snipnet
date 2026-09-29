@@ -141,9 +141,10 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
   }
 
   /**
-   * Locks the job row for the rest of the transaction and requires it to be running and held by `workerId` in attempt `attempt`, so
-   * progress, result and failure reports serialize against each other and against a claim by another worker. A
-   * worker whose lease expired and was taken over by another worker is answered with 409 and must drop the job.
+   * Locks the job row for the rest of the transaction and requires it to be running and held by `workerId` in the
+   * claim that returned `attempt`, so progress, result and failure reports serialize against each other and against a
+   * re-claim. A worker whose lease expired and whose job was claimed again, by another worker or under the same
+   * worker id, is answered with 409 and must drop the job.
    */
   async function lockRunningJob(
     trx: Tx,

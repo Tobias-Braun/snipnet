@@ -541,6 +541,71 @@ class ImportPipelineTest {
         }
 
     @Test
+    fun aQueuedAnalysisIsDroppedWhenTheImportIsCancelled() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+            store.setCourt("p1", court())
+            pipeline.startAnalysis("p1")
+
+            pipeline.cancel("p1")
+            gate.complete(Unit)
+            val failed = awaitRow { it.status == ProjectStatus.FAILED }
+            assertEquals("Cancelled.", failed.error)
+
+            // The retry only finishes the import; the analysis requested before the cancel must not come back.
+            pipeline.retry("p1")
+            awaitRow { it.status == ProjectStatus.READY }
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+
+            assertTrue("POST /v1/videos/v1/analyze" !in requests)
+        }
+
+    @Test
+    fun aQueuedAnalysisIsDroppedWhenTheProjectIsRemovedDuringTheImport() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+            store.setCourt("p1", court())
+            pipeline.startAnalysis("p1")
+
+            assertTrue(pipeline.remove("p1"))
+            gate.complete(Unit)
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+
+            assertTrue(store.list().isEmpty())
+            assertTrue("POST /v1/videos/v1/analyze" !in requests)
+        }
+
+    @Test
+    fun anAnalysisRequestedWhileOneIsRunningCreatesNoSecondJob() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            store.setCourt("p1", court())
+            jobs += List(200) { "running" }
+            pipeline.startAnalysis("p1")
+            awaitRow { it.status == ProjectStatus.ANALYZING }
+
+            pipeline.startAnalysis("p1")
+            pipeline.startAnalysis("p1", openWhenDone = false)
+            // Lets the running job succeed at the next poll: a request that was wrongly queued instead of ignored would
+            // only start its second job once this analysis ended, so the assertions must wait for that end.
+            jobs.add(0, "succeeded")
+            awaitRow { it.status == ProjectStatus.ANALYZED }
+            // The second wait covers a follow-up task that the first one would have launched while finishing.
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+
+            assertEquals(1, requests.count { it == "POST /v1/videos/v1/analyze" })
+            assertEquals(1, analyzed.size)
+        }
+
+    @Test
     fun analysisSendsTheLocalCourtPollsTheJobAndOpensTheEditor() =
         runBlocking<Unit> {
             pipeline.import(listOf(original))

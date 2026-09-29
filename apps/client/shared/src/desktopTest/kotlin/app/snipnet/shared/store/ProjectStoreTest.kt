@@ -42,6 +42,25 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun purgeOwnerlessRemovesOnlyProjectsWithoutUserId() {
+        val database = openInMemoryDatabase()
+        database.projectQueries.insert("old", null, "/old.mp4", "/proxies/old.mp4", null, null, null, 1L, 1L)
+        val store = store(database)
+        val mine = store.create("/mine.mp4").id
+        signedIn = "u2"
+        val theirs = store.create("/theirs.mp4").id
+
+        val purged = store.purgeOwnerless()
+
+        assertEquals(listOf("old"), purged.map { it.id })
+        assertEquals("/proxies/old.mp4", purged.single().proxyPath)
+        assertNull(store.get("old"))
+        assertNotNull(store.get(mine))
+        assertNotNull(store.get(theirs))
+        assertEquals(emptyList(), store.purgeOwnerless())
+    }
+
+    @Test
     fun pendingSavesAreScopedToTheUser() {
         val store = store()
         val id = store.create("/a.mp4").id

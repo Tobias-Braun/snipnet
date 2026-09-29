@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 
@@ -62,7 +63,12 @@ class AppContainer(
             newId = { UUID.randomUUID().toString() },
             now = System::currentTimeMillis,
             currentUserId = { session.user.value?.id },
-        )
+        ).also { store ->
+            // Projects from before user_id existed belong to nobody; drop them and their derived proxy files once.
+            store.purgeOwnerless().forEach { project ->
+                project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
+            }
+        }
     }
 
     /**

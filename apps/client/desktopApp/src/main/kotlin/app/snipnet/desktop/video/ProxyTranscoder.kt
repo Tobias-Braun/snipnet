@@ -1,10 +1,10 @@
 package app.snipnet.desktop.video
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,7 +82,8 @@ class FfmpegProxyTranscoder(
         try {
             val errors =
                 async {
-                    cancellationAware {
+                    // Checks the enclosing scope, not this child: see readOrCancel.
+                    this@coroutineScope.readOrCancel {
                         process.errorStream
                             .bufferedReader()
                             .readText()
@@ -90,14 +91,16 @@ class FfmpegProxyTranscoder(
                             .takeLast(ERROR_TAIL_CHARS)
                     }
                 }
-            cancellationAware {
+            readOrCancel {
                 process.inputStream.bufferedReader().forEachLine { line ->
                     parseProgress(line, durationMs)?.let(onProgress)
                 }
             }
             val exit = process.waitFor()
+            // Drained before the finally block below closes the pipes, which it does even for an exited process.
+            val errorTail = errors.await()
             ensureActive()
-            if (exit != 0) throw TranscodeException("ffmpeg exited with code $exit: ${errors.await()}")
+            if (exit != 0) throw TranscodeException("ffmpeg exited with code $exit: $errorTail")
             onProgress(1.0)
         } finally {
             killer.cancel()
@@ -106,17 +109,22 @@ class FfmpegProxyTranscoder(
     }
 
     /**
-     * Runs a blocking read of the ffmpeg pipes. When the caller is cancelled the watcher kills the process, and on
-     * Linux that can close the pipe under a read that is still blocked, so the read fails with an [IOException]
-     * instead of seeing EOF. That failure is only a side effect of the cancellation, so [ensureActive] reports it as
-     * the CancellationException. An [IOException] while the coroutine is still active is a real error and is
-     * rethrown unchanged.
+     * Runs a blocking read of the ffmpeg pipes. When the caller is cancelled the watcher kills the process, and
+     * `Process.destroyForcibly` also closes the pipes, so on Linux a read that is still blocked fails with an
+     * [IOException] ("Stream closed") instead of seeing EOF. That failure is only a side effect of the cancellation,
+     * so [ensureActive] reports it as the CancellationException. An [IOException] while the scope is still active is
+     * a real error and is rethrown unchanged.
+     *
+     * The receiver must be the scope that owns the watcher. Its job is marked cancelling before any child is told,
+     * so it is already inactive whenever the watcher has fired. A sibling child such as the stderr reader can still
+     * look active at that moment, because the watcher resumes on another thread while the cancellation is still
+     * being passed down to the other children.
      */
-    private suspend fun <T> cancellationAware(block: () -> T): T =
+    private inline fun <T> CoroutineScope.readOrCancel(block: () -> T): T =
         try {
             block()
         } catch (e: IOException) {
-            currentCoroutineContext().ensureActive()
+            ensureActive()
             throw e
         }
 

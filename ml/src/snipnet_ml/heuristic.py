@@ -4,7 +4,8 @@ The pipeline runs on the per-window feature table from `snipnet_ml.features` (0.
 
 1. Every feature is normalized per video to roughly 0..1 with robust percentiles, so the same parameters work for
    quiet and loud recordings. A minimum range keeps a video without any rally from having its noise stretched
-   into a fake signal.
+   into a fake signal. The low end is additionally capped by an absolute noise floor, so a clip that is almost
+   entirely rally is not normalized to zero everywhere.
 2. The normalized features are averaged with fixed weights into one activity score. Audio hits are sparse (a hit
    every second or so), so the audio features are averaged over a few seconds first.
 3. A logistic function turns the score into a rally probability, which is also what is reported as the 2 Hz
@@ -70,6 +71,12 @@ class HeuristicParams:
     min_motion_range: float = 0.5
     min_onset_range: float = 0.1
     min_transient_range: float = 0.2
+    # Absolute noise floors (in the feature's own unit): the low end of the normalization is `min(low percentile,
+    # floor)`. Without them a clip that is almost all rally has its low percentile at rally level and every window
+    # normalizes to about 0. Dead-time noise stays below these values, so ordinary clips are not affected.
+    motion_noise_floor: float = 0.3
+    onset_noise_floor: float = 0.05
+    transient_noise_floor: float = 0.1
 
     # Logistic mapping of the score to a probability: 0.5 at `score_midpoint`, steeper with `score_steepness`.
     score_midpoint: float = 0.4
@@ -138,8 +145,9 @@ def _moving_average(values: np.ndarray, seconds: float, window_s: float) -> np.n
     return total / counts
 
 
-def _normalize(values: np.ndarray, params: HeuristicParams, min_range: float) -> np.ndarray:
+def _normalize(values: np.ndarray, params: HeuristicParams, min_range: float, noise_floor: float) -> np.ndarray:
     low, high = np.percentile(values, [params.low_percentile, params.high_percentile])
+    low = min(low, noise_floor)
     return np.clip((values - low) / max(high - low, min_range), 0.0, 1.0)
 
 
@@ -154,9 +162,9 @@ def activity_score(table: FeatureFrame, params: HeuristicParams) -> np.ndarray:
     weights = np.array([params.motion_weight, params.onset_weight, params.transient_weight])
     signals = np.stack(
         [
-            _normalize(motion, params, params.min_motion_range),
-            _normalize(onset, params, params.min_onset_range),
-            _normalize(transients, params, params.min_transient_range),
+            _normalize(motion, params, params.min_motion_range, params.motion_noise_floor),
+            _normalize(onset, params, params.min_onset_range, params.onset_noise_floor),
+            _normalize(transients, params, params.min_transient_range, params.transient_noise_floor),
         ]
     )
     return (weights / weights.sum()) @ signals

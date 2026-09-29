@@ -156,6 +156,26 @@ def test_predict_from_features_on_a_hand_made_table() -> None:
     assert abs(segment.end_ms - 21_500) <= 1500
 
 
+def test_clip_that_is_one_continuous_rally_yields_one_segment() -> None:
+    n = 60
+    starts = np.arange(n) * 0.5
+    rng = np.random.default_rng(0)
+    table = FeatureFrame.from_arrays(
+        t_start=starts,
+        t_end=starts + 0.5,
+        roi_motion=4.0 + rng.uniform(-0.5, 0.5, n),
+        outside_motion=np.full(n, 1.0),
+        onset_mean=0.6 + rng.uniform(-0.1, 0.1, n),
+        onset_max=np.full(n, 20.0),
+        transient_count=rng.integers(1, 3, n),
+    )
+    prediction = predict_from_features(table, 30_000, HeuristicParams())
+    assert len(prediction.segments) == 1
+    segment = prediction.segments[0]
+    assert segment.start_ms == 0
+    assert segment.end_ms >= 28_000
+
+
 def test_params_yaml_overrides_only_named_values(tmp_path: Path) -> None:
     path = tmp_path / "params.yaml"
     path.write_text("min_rally_s: 4.0\npad_after_s: 0\n", encoding="utf-8")

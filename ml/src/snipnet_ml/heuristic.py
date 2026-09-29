@@ -1,4 +1,4 @@
-"""Heuristic rally model (`heuristic-v0.1`): hand-tuned feature combination, HMM smoothing and segment cleanup.
+"""Heuristic rally model (`heuristic-v0.2`): hand-tuned feature combination, HMM smoothing and segment cleanup.
 
 The pipeline runs on the per-window feature table from `snipnet_ml.features` (0.5 s windows):
 
@@ -39,7 +39,12 @@ from snipnet_ml.model import (
     probe_duration_ms,
 )
 
-HEURISTIC_VERSION = "heuristic-v0.1"
+HEURISTIC_VERSION = "heuristic-v0.2"
+
+# Earlier versions still accepted as the ``MODEL`` setting. v0.2 changed the default padding around each rally
+# (1.0 s / 1.5 s became 0.5 s / 0.5 s), so a deployment pinned to v0.1 gets the current heuristic; its predictions
+# are stamped with HEURISTIC_VERSION, which keeps them distinguishable from older ones.
+HEURISTIC_VERSION_ALIASES = ("heuristic-v0.1",)
 
 # Used when the caller did not provide a court: the whole frame is treated as the court.
 _FULL_FRAME = Roi(x=0.0, y=0.0, width=1.0, height=1.0)

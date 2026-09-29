@@ -73,3 +73,10 @@ compose.desktop {
         }
     }
 }
+
+tasks.withType<Test>().configureEach {
+    // Native loading failures (missing system libraries on a CI image) only show their cause in the full trace.
+    testLogging {
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}

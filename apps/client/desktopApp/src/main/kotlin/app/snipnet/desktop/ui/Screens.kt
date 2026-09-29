@@ -10,9 +10,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.snipnet.desktop.di.AppContainer
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
 
@@ -35,17 +39,17 @@ private fun PlaceholderScreen(
 }
 
 @Composable
-fun LoginScreen(navigator: Navigator) {
-    PlaceholderScreen("Sign in", "Login and registration arrive with the API client.") {
-        Button(onClick = { navigator.resetTo(Screen.Projects) }) { Text("Continue") }
-    }
-}
-
-@Composable
-fun ProjectsScreen(navigator: Navigator) {
-    PlaceholderScreen("Projects", "Your videos will be listed here.") {
-        OutlinedButton(onClick = { navigator.resetTo(Screen.Login) }) { Text("Sign out") }
-        Button(onClick = { navigator.push(Screen.CourtSelection(PLACEHOLDER_VIDEO_ID)) }) { Text("Open sample") }
+fun ProjectsScreen(container: AppContainer) {
+    val user by container.session.user.collectAsState()
+    val projectCount = remember { container.projectStore.list().size }
+    PlaceholderScreen(
+        "Projects",
+        "Signed in as ${user?.email ?: "unknown"}. $projectCount local project(s); the list arrives with the editor.",
+    ) {
+        OutlinedButton(onClick = container::logout) { Text("Sign out") }
+        Button(onClick = { container.navigator.push(Screen.CourtSelection(PLACEHOLDER_VIDEO_ID)) }) {
+            Text("Open sample")
+        }
     }
 }
 

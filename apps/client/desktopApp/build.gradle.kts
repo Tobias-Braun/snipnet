@@ -17,9 +17,11 @@ dependencies {
     implementation(libs.compose.foundation)
     implementation(compose.material3)
     implementation(libs.kotlinx.coroutines.swing)
+    implementation(libs.ktor.client.cio)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.ktor.client.mock)
 }
 
 compose.desktop {

@@ -94,6 +94,13 @@ def test_tracker_caps_the_foot_gate_growth() -> None:
     assert tracker.update([(0.85, 0.1, 0.95, 0.4)])[0].track_id != first[0].track_id
 
 
+def test_person_config_rejects_a_foot_gate_scale_below_one() -> None:
+    # A scale below 1 would shrink the gate for tracks that missed frames, the opposite of its purpose.
+    assert PersonConfig(foot_gate_max_scale=1.0).foot_gate_max_scale == 1.0
+    with pytest.raises(ValueError, match="foot_gate_max_scale"):
+        PersonConfig(foot_gate_max_scale=0.5)
+
+
 def test_tracker_foot_gate_uses_isotropic_distance_and_can_be_disabled() -> None:
     # A normalized x shift of 0.2 is 0.67 heights of the 0.3 high box on a square frame, but on a 2:1 frame it
     # equals 0.4 frame heights, which is more than one box height.

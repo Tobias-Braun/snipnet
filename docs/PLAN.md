@@ -67,7 +67,7 @@ Per 0.5 s window, computed on the proxy restricted to the court ROI:
   hits are short, loud impulses; distant background courts are quieter.
 
 A weighted score becomes a rally probability. A 2-state HMM (Viterbi) or hysteresis smoothing then produces
-segments, with minimum rally length, minimum gap and padding (default: 1.0 s before, 1.5 s after).
+segments, with minimum rally length, minimum gap and padding (default: 0.5 s before and after).
 
 ### v1 — learned from corrections
 

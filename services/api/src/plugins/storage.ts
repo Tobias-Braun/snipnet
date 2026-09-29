@@ -31,6 +31,12 @@ export interface PresignedUpload {
   expiresAt: Date;
 }
 
+export interface ObjectInfo {
+  sizeBytes: number;
+  /** Content fingerprint of the object; it changes whenever the object is overwritten with different bytes. */
+  etag: string;
+}
+
 /** The object store operations the API needs, so routes do not depend on the AWS SDK directly. */
 export interface Storage {
   /** Presigned PUT for `key` that only accepts a `video/mp4` body of exactly `sizeBytes` bytes. */
@@ -45,8 +51,8 @@ export interface Storage {
    * public endpoint, because the training pipeline fetches proxies from outside the Compose network.
    */
   presignExportDownload: (key: string) => Promise<string>;
-  /** Size of the stored object in bytes, or `null` when the key does not exist. */
-  objectSize: (key: string) => Promise<number | null>;
+  /** Size and ETag of the stored object, or `null` when the key does not exist. */
+  objectInfo: (key: string) => Promise<ObjectInfo | null>;
   /** Removes the object; deleting a key that does not exist is not an error. */
   deleteObject: (key: string) => Promise<void>;
 }
@@ -118,10 +124,11 @@ export function createStorage(config: S3Config): Storage & { close: () => void }
       return getSignedUrl(signer, command, { expiresIn: EXPORT_URL_TTL_SECONDS });
     },
 
-    async objectSize(key) {
+    async objectInfo(key) {
       try {
         const head = await internal.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
-        return head.ContentLength ?? null;
+        if (head.ContentLength === undefined || head.ETag === undefined) return null;
+        return { sizeBytes: head.ContentLength, etag: head.ETag };
       } catch (error) {
         // HEAD responses have no body, so the SDK reports a missing key as the generic NotFound error.
         if (error instanceof NotFound) return null;

@@ -28,6 +28,8 @@ export interface VideosTable {
   court: ColumnType<unknown, string | null | undefined, string | null>;
   /** Key of the proxy object in the S3 bucket. */
   object_key: string;
+  /** ETag of the proxy object when `upload-complete` accepted it; the worker claim verifies it is unchanged. */
+  proxy_etag: string | null;
   created_at: Timestamp;
   updated_at: Timestamp;
 }

@@ -98,6 +98,15 @@ class RallyExporterTest {
         }
 
     @Test
+    fun aPercentSignInTheSourceNameIsKeptLiterally() =
+        runBlocking {
+            val source = Files.copy(clip, tmp.resolve("final 100%d.mp4"))
+            val files = exporter.export(request(ExportMode.PerRally, ExportQuality.Copy, twoRallies, source)) {}
+
+            assertEquals(listOf("final 100%d-rally-001.mp4", "final 100%d-rally-002.mp4"), files.map { it.name })
+        }
+
+    @Test
     fun projectFilesDescribeTheOriginal() =
         runBlocking {
             val fcpxml = exporter.export(request(ExportMode.Fcpxml, ExportQuality.Copy, twoRallies)) {}.single()

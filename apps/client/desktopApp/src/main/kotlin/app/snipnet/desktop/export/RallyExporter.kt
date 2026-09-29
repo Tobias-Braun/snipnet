@@ -96,7 +96,8 @@ class FfmpegRallyExporter(
         val extension = FfmpegCommands.extensionFor(request.source, request.quality)
         val progress = PartProgress(request.ranges.sumOf { it.endMs - it.startMs }, onProgress)
         request.ranges.forEachIndexed { index, range ->
-            val target = request.folder.resolve("$stem-rally-%03d.$extension".format(index + 1))
+            // Only the number goes through format, since a stem like "final 100%" is not a valid format string.
+            val target = request.folder.resolve("$stem-rally-${"%03d".format(index + 1)}.$extension")
             written.add(target)
             cutTo(request, target, range, progress)
         }
@@ -210,7 +211,9 @@ internal object FfmpegProcess {
             if (exit != 0) throw ExportException("ffmpeg exited with code $exit: ${errors.await()}")
         } finally {
             killer.cancel()
-            process.destroyForcibly()
+            // Waiting for the exit makes the caller's cleanup deterministic: a dying ffmpeg can no longer create or
+            // hold its output file open (which blocks deletion on Windows) once this returns.
+            process.destroyForcibly().waitFor()
         }
     }
 }

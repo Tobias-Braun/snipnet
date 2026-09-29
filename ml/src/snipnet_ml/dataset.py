@@ -25,8 +25,9 @@ import re
 import shutil
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,11 @@ DEFAULT_SPLIT_SEED = 0
 
 # Video ids come from the API and end up in file names, so anything but a plain id is rejected.
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+# Schemes a proxy URL of an API-sourced export may use: the API hands out signed https storage URLs.
+REMOTE_SCHEMES = ("http", "https")
+# A local --export file is chosen by the operator, so it may also point at proxies on disk (offline exports, tests).
+LOCAL_EXPORT_SCHEMES = (*REMOTE_SCHEMES, "file")
 
 Downloader = Callable[[str, Path], None]
 
@@ -108,14 +114,24 @@ def window_labels(rallies: list[Rally], n_windows: int, window_s: float) -> np.n
     return labels
 
 
-def download_proxy(url: str, target: Path) -> None:
-    """Stream `url` into `target` through a temporary file, so an interrupted download is never mistaken for a proxy."""
+def check_proxy_scheme(url: str, allowed_schemes: Collection[str]) -> None:
+    """Reject a proxy URL whose scheme is not in `allowed_schemes`."""
     scheme = urllib.parse.urlparse(url).scheme
-    if scheme not in ("http", "https", "file"):
+    if scheme not in allowed_schemes:
         raise ValueError(f"unsupported proxy URL scheme {scheme!r}")
+
+
+def download_proxy(url: str, target: Path, allowed_schemes: Collection[str] = REMOTE_SCHEMES) -> None:
+    """Stream `url` into `target` through a temporary file, so an interrupted download is never mistaken for a proxy.
+
+    Only remote schemes are accepted by default. `file` must be allowed explicitly, which is only safe when the export
+    is a local file the operator chose: an export fetched from the API could otherwise make the builder copy
+    arbitrary local files into the dataset directory.
+    """
+    check_proxy_scheme(url, allowed_schemes)
     temporary = target.with_name(target.name + ".part")
     try:
-        # The scheme is restricted above; `file` exists so tests and offline exports can point at local proxies.
+        # The scheme is restricted above; `file` is only allowed for local exports, so tests can use local proxies.
         with urllib.request.urlopen(url, timeout=60) as response, open(temporary, "wb") as out:  # NOSONAR
             shutil.copyfileobj(response, out)
         os.replace(temporary, target)
@@ -131,12 +147,25 @@ class DatasetConfig:
     split_seed: int = DEFAULT_SPLIT_SEED
 
 
+def _checked_downloader(
+    entries: list[ExportEntry], downloader: Downloader | None, allowed_schemes: Collection[str]
+) -> Downloader:
+    """Validate every proxy URL up front and return the downloader to use.
+
+    The default downloader enforces the same schemes again, so a custom one is the only way to bypass the check.
+    """
+    for entry in entries:
+        check_proxy_scheme(entry.proxy_url, allowed_schemes)
+    return downloader or partial(download_proxy, allowed_schemes=allowed_schemes)
+
+
 def build_dataset(
     entries: list[ExportEntry],
     out_dir: str | Path,
     config: DatasetConfig | None = None,
-    downloader: Downloader = download_proxy,
+    downloader: Downloader | None = None,
     embedder: VisualEmbedder | None = None,
+    allowed_schemes: Collection[str] = REMOTE_SCHEMES,
 ) -> Path:
     """Download proxies, compute features and labels and write the dataset; returns the path of `dataset.json`.
 
@@ -145,7 +174,12 @@ def build_dataset(
     incremental export (`--since`) into an existing dataset directory add to it instead of replacing it. Merging
     into a dataset built with different feature or embedding settings is refused, because its examples would not be
     comparable.
+
+    Every proxy URL is checked against `allowed_schemes` before any work is done, so an export with a disallowed URL
+    fails without touching the output directory. Callers building from a local export file pass
+    `LOCAL_EXPORT_SCHEMES`; the default admits remote URLs only.
     """
+    downloader = _checked_downloader(entries, downloader, allowed_schemes)
     config = config or DatasetConfig()
     out = Path(out_dir)
     features_settings = config.features.__dict__ | {"hit_band": list(config.features.hit_band)}
@@ -273,7 +307,8 @@ def main(argv: list[str] | None = None) -> None:
             parser.error("ADMIN_TOKEN must be set to use --api-url")
         lines = fetch_export(args.api_url, token, args.since)
     config = DatasetConfig(embeddings=EmbeddingConfig(weights=args.weights), split_seed=args.split_seed)
-    path = build_dataset(parse_export(lines), args.out, config)
+    schemes = LOCAL_EXPORT_SCHEMES if args.export else REMOTE_SCHEMES
+    path = build_dataset(parse_export(lines), args.out, config, allowed_schemes=schemes)
     print(f"wrote {path}")
 
 

@@ -5,13 +5,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from snipnet_ml import dataset as dataset_module
 from snipnet_ml import fixtures, load_model
 from snipnet_ml import labels as labels_module
 from snipnet_ml.dataset import (
+    LOCAL_EXPORT_SCHEMES,
     Dataset,
     DatasetConfig,
     assign_split,
     build_dataset,
+    download_proxy,
     parse_export,
     window_labels,
 )
@@ -91,6 +94,63 @@ def test_parse_export_skips_blank_lines_and_rejects_bad_ones() -> None:
         parse_export([good.replace('"a1"', '"../evil"')])
 
 
+def local_file_export_line(source: Path) -> str:
+    return json.dumps(
+        {
+            "video": {"id": "a1", "durationMs": 1000, "court": {"roi": {"x": 0, "y": 0, "width": 1, "height": 1}}},
+            "proxyUrl": source.as_uri(),
+            "final": {"segments": [{"startMs": 0, "endMs": 500}]},
+        }
+    )
+
+
+def test_file_proxy_url_is_rejected_for_an_api_sourced_export(tmp_path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("not a proxy")
+    out = tmp_path / "out"
+    entries = parse_export([local_file_export_line(secret)])
+    # The default schemes are the ones used for an export fetched from the API.
+    with pytest.raises(ValueError, match="unsupported proxy URL scheme 'file'"):
+        build_dataset(entries, out)
+    assert not (out / "proxies").exists()
+    with pytest.raises(ValueError, match="unsupported proxy URL scheme 'file'"):
+        download_proxy(secret.as_uri(), tmp_path / "copy.mp4")
+    assert not (tmp_path / "copy.mp4").exists()
+
+
+def test_main_only_allows_file_proxy_urls_for_an_export_file(tmp_path, monkeypatch) -> None:
+    """The CLI decides the allowed schemes from where the export came from, so both sources are checked end to end."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("not a proxy")
+    line = local_file_export_line(secret)
+    monkeypatch.setenv("ADMIN_TOKEN", "test-token")
+    monkeypatch.setattr(dataset_module, "fetch_export", lambda *_: [line])
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="unsupported proxy URL scheme 'file'"):
+        dataset_module.main(["--api-url", "https://api.example.test", "--out", str(out)])
+    assert not out.exists()
+
+    # A local export file gets past the check; the build itself is stubbed out, only the chosen schemes matter here.
+    export = tmp_path / "export.ndjson"
+    export.write_text(line + "\n")
+    calls = []
+    monkeypatch.setattr(
+        dataset_module,
+        "build_dataset",
+        lambda entries, out_dir, config, allowed_schemes: calls.append(allowed_schemes) or out_dir / "dataset.json",
+    )
+    dataset_module.main(["--export", str(export), "--out", str(out)])
+    assert calls == [LOCAL_EXPORT_SCHEMES]
+
+
+def test_file_proxy_url_is_allowed_for_a_local_export(tmp_path) -> None:
+    source = tmp_path / "proxy.mp4"
+    source.write_bytes(b"proxy bytes")
+    target = tmp_path / "copy.mp4"
+    download_proxy(source.as_uri(), target, LOCAL_EXPORT_SCHEMES)
+    assert target.read_bytes() == b"proxy bytes"
+
+
 @pytest.fixture(scope="module")
 def pipeline(tmp_path_factory):
     """Synthetic export with 5 train, 1 validation and 2 test videos, the built dataset and a trained model."""
@@ -108,7 +168,7 @@ def pipeline(tmp_path_factory):
             truth[video_id] = labels
             lines.append(export_line(video_id, video, labels))
     config = DatasetConfig(embeddings=EmbeddingConfig(weights="random", crop_size=64))
-    dataset_path = build_dataset(parse_export(lines), root / "data", config)
+    dataset_path = build_dataset(parse_export(lines), root / "data", config, allowed_schemes=LOCAL_EXPORT_SCHEMES)
     dataset = Dataset(dataset_path.parent)
     model_dir = train(
         dataset, root / "models", TrainConfig(epochs=25, hidden=16, blocks=3, crop_windows=64, seed=3), device="cpu"
@@ -138,7 +198,7 @@ def test_incremental_build_merges_into_existing_dataset(pipeline, tmp_path) -> N
     corrected = [{"startMs": 1000, "endMs": 4000}]
     line = export_line(updated, root / "source" / f"{updated}.mp4", truth[updated], corrected)
 
-    merged = Dataset(build_dataset(parse_export([line]), target, config).parent)
+    merged = Dataset(build_dataset(parse_export([line]), target, config, allowed_schemes=LOCAL_EXPORT_SCHEMES).parent)
 
     for split, expected in plan.items():
         assert sorted(merged.video_ids(split)) == sorted(expected)

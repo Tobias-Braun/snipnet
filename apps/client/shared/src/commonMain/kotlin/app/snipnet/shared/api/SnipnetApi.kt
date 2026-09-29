@@ -27,6 +27,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
+import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CancellationException
@@ -88,25 +89,26 @@ class SnipnetApi(
 
     suspend fun listVideos(): List<Video> = send<VideoList>(HttpMethod.Get, "/v1/videos").items
 
-    suspend fun getVideo(id: String): Video = send(HttpMethod.Get, "/v1/videos/$id")
+    suspend fun getVideo(id: String): Video = send(HttpMethod.Get, path("videos", id))
 
-    suspend fun deleteVideo(id: String) = sendNoContent(HttpMethod.Delete, "/v1/videos/$id")
+    suspend fun deleteVideo(id: String) = sendNoContent(HttpMethod.Delete, path("videos", id))
 
-    suspend fun uploadComplete(id: String): Video = send(HttpMethod.Post, "/v1/videos/$id/upload-complete")
+    suspend fun uploadComplete(id: String): Video = send(HttpMethod.Post, path("videos", id, "upload-complete"))
 
     suspend fun putCourt(
         id: String,
         court: Court,
-    ): Video = send(HttpMethod.Put, "/v1/videos/$id/court", SnipnetJson.encodeToJsonElement(Court.serializer(), court))
+    ): Video =
+        send(HttpMethod.Put, path("videos", id, "court"), SnipnetJson.encodeToJsonElement(Court.serializer(), court))
 
-    suspend fun analyze(id: String): Job = send(HttpMethod.Post, "/v1/videos/$id/analyze", JsonObject(emptyMap()))
+    suspend fun analyze(id: String): Job = send(HttpMethod.Post, path("videos", id, "analyze"), JsonObject(emptyMap()))
 
-    suspend fun getJob(id: String): Job = send(HttpMethod.Get, "/v1/jobs/$id")
+    suspend fun getJob(id: String): Job = send(HttpMethod.Get, path("jobs", id))
 
     suspend fun listSegmentSets(videoId: String): List<SegmentSet> =
-        send<SegmentSetList>(HttpMethod.Get, "/v1/videos/$videoId/segment-sets").items
+        send<SegmentSetList>(HttpMethod.Get, path("videos", videoId, "segment-sets")).items
 
-    suspend fun getSegmentSet(id: String): SegmentSet = send(HttpMethod.Get, "/v1/segment-sets/$id")
+    suspend fun getSegmentSet(id: String): SegmentSet = send(HttpMethod.Get, path("segment-sets", id))
 
     suspend fun createSegmentSet(
         videoId: String,
@@ -117,7 +119,7 @@ class SnipnetApi(
     ): SegmentSet =
         send(
             HttpMethod.Post,
-            "/v1/videos/$videoId/segment-sets",
+            path("videos", videoId, "segment-sets"),
             buildJsonObject {
                 put("parentSetId", parentSetId?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("segments", SnipnetJson.encodeToJsonElement(ListSerializer(Segment.serializer()), segments))
@@ -166,6 +168,16 @@ class SnipnetApi(
     }
 
     override fun close() = client.close()
+
+    /**
+     * Builds `/v1/<collection>/<id>[/<action>]` with the id percent-encoded as a single path segment, so an id that
+     * is not a UUID (a corrupted local store row, say) can never reach a different route through `/` or `?`.
+     */
+    private fun path(
+        collection: String,
+        id: String,
+        action: String? = null,
+    ): String = "/v1/$collection/${id.encodeURLPathPart()}" + (action?.let { "/$it" } ?: "")
 
     private fun credentials(
         email: String,

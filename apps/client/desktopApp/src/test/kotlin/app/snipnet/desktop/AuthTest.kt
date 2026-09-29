@@ -75,9 +75,9 @@ class SessionAndAuthTest {
 
     private fun env(
         stored: String? = null,
+        tokenStore: TokenStore = TokenStore(Files.createTempDirectory("snipnet-session").resolve("token")),
         handler: (path: String) -> Pair<HttpStatusCode, String>,
     ): Env {
-        val tokenStore = TokenStore(Files.createTempDirectory("snipnet-session").resolve("token"))
         stored?.let(tokenStore::save)
         val api =
             SnipnetApi(
@@ -259,6 +259,26 @@ class SessionAndAuthTest {
             holder.submit()
             settle(holder)
             assertEquals("An account with this email already exists.", holder.state.value.error)
+        }
+
+    @Test
+    fun unwritableTokenFileReportsAnErrorAndStaysSignedOut() =
+        runTest {
+            // A regular file where the data directory should be makes every token write fail.
+            val blocker = Files.createTempFile("snipnet-blocker", "")
+            var authenticated = false
+            val env = env(tokenStore = TokenStore(blocker.resolve("token"))) { authOk }
+            val holder = holder(env) { authenticated = true }
+            holder.setEmail("a@b.de")
+            holder.setPassword("password1")
+            holder.submit()
+            settle(holder)
+            assertFalse(authenticated)
+            assertFalse(holder.state.value.submitting)
+            val error = assertNotNull(holder.state.value.error)
+            assertTrue(error.startsWith("Could not save your sign-in"))
+            assertNull(env.api.token)
+            assertNull(env.session.user.value)
         }
 
     @Test

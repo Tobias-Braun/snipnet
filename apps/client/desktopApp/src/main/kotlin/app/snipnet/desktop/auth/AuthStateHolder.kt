@@ -5,6 +5,7 @@ import app.snipnet.shared.api.ApiError
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 enum class AuthMode { LOGIN, REGISTER }
 
@@ -62,6 +63,10 @@ class AuthStateHolder(
                 onAuthenticated()
             } catch (e: ApiError) {
                 update { it.copy(submitting = false, error = describe(e, current.mode)) }
+            } catch (e: IOException) {
+                // The server accepted the credentials but the token could not be written to the data directory.
+                val message = "Could not save your sign-in on this computer: ${e.message}"
+                update { it.copy(submitting = false, error = message) }
             }
         }
     }

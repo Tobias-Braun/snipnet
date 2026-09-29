@@ -59,9 +59,13 @@ class Session(
         onLoggedOut()
     }
 
+    /**
+     * Persists the token first so that a failing write (full disk, unwritable data dir) leaves the session untouched
+     * instead of half signed in; the caller sees the IOException and can report it.
+     */
     private fun adopt(auth: app.snipnet.shared.model.AuthResponse) {
-        api.token = auth.token
         tokenStore.save(auth.token)
+        api.token = auth.token
         mutableUser.value = auth.user
     }
 

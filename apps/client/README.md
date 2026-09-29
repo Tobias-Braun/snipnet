@@ -23,12 +23,10 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 | `state` | `StateHolder`, the ViewModel-like base class. |
 | `window` | Window geometry persistence (`window.json` in the data directory). |
 | `auth` | `Session` (login, register, restore, logout), `TokenStore` (`token` file, mode 600) and `AuthStateHolder`. |
-
-The API base URL defaults to `http://localhost:3000` and is overridden with `$SNIPNET_API_URL`. Local projects live in
-`snipnet.db` in the data directory.
 | `ui` | Composables. Screens are placeholders until their features land. |
 
-The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set.
+The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set. Local projects live in `snipnet.db` there.
+The API base URL defaults to `http://localhost:3000` and is overridden with `$SNIPNET_API_URL`.
 
 ## Dependency injection
 
@@ -37,8 +35,8 @@ There is no DI framework. `AppContainer` is created once in `main` and holds lon
 
 ```kotlin
 class AppContainer(...) {
-    val api by lazy { SnipnetApi(baseUrl, tokenStore) }
-    fun projectsStateHolder() = ProjectsStateHolder(api)
+    val videoEngine by lazy { VideoEngine(dataDir) }
+    fun projectsStateHolder() = ProjectsStateHolder(api, projectStore)
 }
 ```
 

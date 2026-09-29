@@ -188,6 +188,18 @@ class SnipnetApiTest {
         }
 
     @Test
+    fun idsAreEncodedAsASinglePathSegment() =
+        runTest {
+            val rec = Recorder()
+            api(rec) { ok(videoJson) }.getVideo("../me?x=1")
+            assertEquals("/v1/videos/..%2Fme%3Fx=1", rec.last.url.encodedPath)
+            assertTrue(
+                rec.last.url.parameters
+                    .isEmpty(),
+            )
+        }
+
+    @Test
     fun deleteVideoAcceptsNoContent() =
         runTest {
             val rec = Recorder()

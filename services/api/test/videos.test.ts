@@ -1,5 +1,5 @@
 import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import { createDb } from '../src/db/client.js';
@@ -352,6 +352,28 @@ describe('video routes', () => {
         .where('id', '=', video.id)
         .executeTakeFirstOrThrow();
       expect(row.status).toBe('failed');
+    });
+
+    it('leaves the job untouched when the object store cannot be reached', async () => {
+      const { video } = await confirmedVideoWithJob(64);
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo').mockRejectedValueOnce(new Error('storage down'));
+
+      try {
+        expect((await claim()).statusCode).toBe(500);
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      // The failed claim spent no attempt, so the job is handed out normally once the store is back.
+      const job = await app.db
+        .selectFrom('jobs')
+        .select(['status', 'attempts', 'worker_id'])
+        .where('video_id', '=', video.id)
+        .executeTakeFirstOrThrow();
+      expect(job).toEqual({ status: 'queued', attempts: 0, worker_id: null });
+      const retry = await claim();
+      expect(retry.statusCode).toBe(200);
+      expect(retry.json<{ job: { attempts: number } }>().job.attempts).toBe(1);
     });
   });
 

@@ -92,6 +92,10 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
    * Picks the oldest claimable job with `FOR UPDATE SKIP LOCKED`, so parallel workers each lock a different row
    * instead of waiting for or double-claiming one. A running job whose lease has expired counts as claimable
    * (its worker died); if it has already used all attempts it is failed instead and the next candidate is tried.
+   * A candidate whose proxy was replaced after `upload-complete` (the presigned PUT URL outlives it) or removed is
+   * not what the client confirmed, so it fails for good as well. That check runs inside the transaction: when the
+   * object store cannot be reached, the error rolls the claim back instead of leaving a running job whose attempt
+   * is spent although no worker ever received it.
    */
   async function claimNext(
     workerId: string,
@@ -124,6 +128,16 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           continue;
         }
 
+        const video = await trx
+          .selectFrom('videos')
+          .selectAll()
+          .where('id', '=', candidate.video_id)
+          .executeTakeFirstOrThrow();
+        if (!(await proxyIsUnchanged(video))) {
+          await failPermanently(trx, candidate, PROXY_CHANGED_MESSAGE);
+          continue;
+        }
+
         const job = await trx
           .updateTable('jobs')
           .set({
@@ -137,11 +151,6 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           })
           .where('id', '=', candidate.id)
           .returningAll()
-          .executeTakeFirstOrThrow();
-        const video = await trx
-          .selectFrom('videos')
-          .selectAll()
-          .where('id', '=', job.video_id)
           .executeTakeFirstOrThrow();
         return { job, video };
       }
@@ -174,14 +183,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
       },
     },
     async (request, reply) => {
-      let claimed = await claimNext(request.body.workerId);
-      // A proxy that was replaced after `upload-complete` (the presigned PUT URL outlives it) or removed is not
-      // what the client confirmed, so its job fails for good and the next candidate is tried.
-      while (claimed !== null && !(await proxyIsUnchanged(claimed.video))) {
-        const { job } = claimed;
-        await app.db.transaction().execute((trx) => failPermanently(trx, job, PROXY_CHANGED_MESSAGE));
-        claimed = await claimNext(request.body.workerId);
-      }
+      const claimed = await claimNext(request.body.workerId);
       if (claimed === null) return reply.code(204).send(null);
 
       const proxyUrl = await app.storage.presignDownload(claimed.video.object_key);

@@ -1,0 +1,21 @@
+# Shared build context for the api, web and worker images (all built from the repository root, see
+# infra/docker-compose.yml). The api image has its own services/api/Dockerfile.dockerignore, which BuildKit
+# prefers over this file for that build.
+
+.git
+.claude
+
+# Dependency directories and caches are reinstalled inside the image; sending host copies only slows the build
+# and can shadow the in-image install.
+**/node_modules
+**/.venv
+**/__pycache__
+**/.gradle
+**/build
+
+# Local footage and model weights must never reach the daemon.
+data
+
+# apps/client is the Kotlin Multiplatform app and no image needs it. apps/web is not excluded because
+# apps/web/Dockerfile copies it from this same context.
+apps/client

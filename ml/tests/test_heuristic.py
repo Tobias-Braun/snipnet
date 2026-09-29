@@ -58,7 +58,7 @@ def test_prediction_shape_and_contract_invariants(clips) -> None:
     prediction = HeuristicModel().predict(video, model_court(labels), progress.append)
     params = HeuristicParams()
 
-    assert prediction.model_version == "heuristic-v0.1"
+    assert prediction.model_version == "heuristic-v0.2"
     assert progress[0] == 0.0
     assert progress[-1] == 1.0
     assert progress == sorted(progress)
@@ -234,9 +234,12 @@ def test_load_model_selects_heuristic_and_dummy(monkeypatch: pytest.MonkeyPatch,
     path = tmp_path / "params.yaml"
     path.write_text("min_rally_s: 5\n", encoding="utf-8")
     monkeypatch.setenv("HEURISTIC_PARAMS", str(path))
-    loaded = load_model("heuristic-v0.1")
+    loaded = load_model("heuristic-v0.2")
     assert isinstance(loaded, HeuristicModel)
     assert loaded.params.min_rally_s == 5
+    legacy = load_model("heuristic-v0.1")
+    assert isinstance(legacy, HeuristicModel)
+    assert legacy.version == "heuristic-v0.2"
 
 
 @needs_ffmpeg
@@ -250,7 +253,7 @@ def test_predict_cli_prints_segments_and_metrics(clips, tmp_path: Path, capsys: 
     predict_main([str(video), "--court", str(court_path), "--eval", str(labels_path)])
 
     output = capsys.readouterr().out
-    assert "heuristic-v0.1" in output
+    assert "heuristic-v0.2" in output
     assert " s - " in output
     assert "segment F1" in output
 

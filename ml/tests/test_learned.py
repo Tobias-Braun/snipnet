@@ -274,14 +274,14 @@ def test_promotion_report_compares_against_heuristic(pipeline, tmp_path, capsys)
     report = compare(dataset, LearnedModel(model_dir, device="cpu"))
     assert report.videos == 2
     assert report.split == "test"
-    assert report.heuristic.version == "heuristic-v0.1"
+    assert report.heuristic.version == "heuristic-v0.2"
     assert report.learned.version == "learned-v1.1"
     assert set(report.learned.per_video_f1) == set(plan["test"])
     assert 0 <= report.learned.f1 <= 1
     assert report.promoted == (
         report.learned.f1 > report.heuristic.f1 and report.learned.frame_accuracy >= report.heuristic.frame_accuracy
     )
-    assert "heuristic-v0.1" in format_markdown(report)
+    assert "heuristic-v0.2" in format_markdown(report)
 
     status = promote_main([str(dataset.directory), str(model_dir), "--out", str(tmp_path), "--device", "cpu"])
     assert status == (0 if report.promoted else 1)

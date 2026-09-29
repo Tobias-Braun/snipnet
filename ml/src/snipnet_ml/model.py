@@ -109,9 +109,14 @@ def load_model(name: str) -> RallyModel:
         return DummyModel()
     # Imported lazily: the heuristic module pulls in the feature stack (av, librosa), which the dummy model and
     # the interface itself do not need.
-    from snipnet_ml.heuristic import HEURISTIC_VERSION, HeuristicModel, HeuristicParams
+    from snipnet_ml.heuristic import (
+        HEURISTIC_VERSION,
+        HEURISTIC_VERSION_ALIASES,
+        HeuristicModel,
+        HeuristicParams,
+    )
 
-    if name in ("heuristic", HEURISTIC_VERSION):
+    if name in ("heuristic", HEURISTIC_VERSION, *HEURISTIC_VERSION_ALIASES):
         params_file = os.environ.get("HEURISTIC_PARAMS")
         return HeuristicModel(HeuristicParams.from_yaml(params_file) if params_file else None)
     if name == "learned" or name.startswith("learned-v1."):

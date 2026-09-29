@@ -296,6 +296,9 @@ class ProjectStoreTest {
         // Migration 3 created the pending delete table.
         migrated.addPendingVideoDelete("remote-1")
         assertEquals(listOf("remote-1"), migrated.pendingVideoDeletes())
+        // Migration 4 created the table that keeps the server videos of purged rows until an account claims them.
+        assertEquals(listOf("old"), migrated.purgeOwnerless().map { it.id })
+        assertEquals(listOf("remote-1"), migrated.claimPurgedRemoteVideos(setOf("remote-1")))
     }
 
     @Test

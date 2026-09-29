@@ -325,6 +325,51 @@ class ImportPipelineTest {
         }
 
     @Test
+    fun anAnalysisRequestedDuringTheUploadStartsWhenTheUploadSucceeded() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+            store.setCourt("p1", court())
+            jobs += listOf("running", "succeeded")
+
+            pipeline.startAnalysis("p1")
+            assertTrue("POST /v1/videos/v1/analyze" !in requests)
+            gate.complete(Unit)
+            val row = awaitRow { it.status == ProjectStatus.ANALYZED }
+
+            assertEquals(1, createCount.get())
+            assertEquals(1, requests.count { it == "POST /v1/videos/v1/analyze" })
+            val uploadDone = requests.indexOf("POST /v1/videos/v1/upload-complete")
+            assertTrue(uploadDone in 0 until requests.indexOf("POST /v1/videos/v1/analyze"))
+            assertEquals("v1", row.project.remoteVideoId)
+            withTimeout(5_000) { while (analyzed.isEmpty()) kotlinx.coroutines.delay(10) }
+        }
+
+    @Test
+    fun aQueuedAnalysisIsDroppedWhenTheImportFails() =
+        runBlocking<Unit> {
+            uploader.failures = 1
+            val release = CompletableDeferred<Unit>()
+            transcoder.behavior = { output ->
+                // Holds the import in the transcode step until the analysis request is queued.
+                release.await()
+                Files.write(output, ByteArray(100))
+            }
+            pipeline.import(listOf(original))
+            store.setCourt("p1", court())
+            pipeline.startAnalysis("p1")
+            release.complete(Unit)
+
+            val failed = awaitRow { it.status == ProjectStatus.FAILED }
+            pipeline.retry(failed.project.id)
+            awaitRow { it.status == ProjectStatus.READY }
+
+            assertTrue("POST /v1/videos/v1/analyze" !in requests)
+        }
+
+    @Test
     fun analysisSendsTheLocalCourtPollsTheJobAndOpensTheEditor() =
         runBlocking<Unit> {
             pipeline.import(listOf(original))

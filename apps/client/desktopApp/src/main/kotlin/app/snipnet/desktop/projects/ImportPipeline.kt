@@ -75,6 +75,13 @@ class ImportPipeline(
     private var videos = mapOf<String, Video>()
     private var serverChecked = false
 
+    /**
+     * Analyses requested while the import was still running, mapped to their `openWhenDone` flag. The import task
+     * picks them up once its upload succeeded (or [finishTask] does, see there); failure, cancellation, [remove] and
+     * [reset] drop them.
+     */
+    private val pendingAnalyses = mutableMapOf<String, Boolean>()
+
     private val mutableRows = MutableStateFlow<List<ProjectRow>>(emptyList())
 
     /** The projects list with badges, newest opened first. */
@@ -97,7 +104,7 @@ class ImportPipeline(
                 continue
             }
             val project = store.create(originalPath = path.toAbsolutePath().toString())
-            launchTask(project.id, TaskState(Stage.PROXY, 0.0)) { importAndUpload(project.id) }
+            launchTask(project.id, TaskState(Stage.PROXY, 0.0)) { importUploadAndAnalyze(project.id) }
         }
         publish()
         return rejected
@@ -132,12 +139,23 @@ class ImportPipeline(
      * Starts the analysis of the uploaded video of the local project [projectId]: saves the local court to the server
      * if it is not there yet, creates the job and polls it until it ends. The court selection screen calls this after
      * the user confirmed the court.
+     *
+     * While the import (transcode, upload) of the project is still running the request is not dropped: it is queued
+     * and the import task starts the analysis right after the upload succeeded. A request during a running analysis
+     * is ignored, as that analysis is what was asked for.
      */
     fun startAnalysis(
         projectId: String,
         openWhenDone: Boolean = true,
     ) {
         val project = store.get(projectId) ?: return
+        val busy =
+            synchronized(lock) {
+                val active = jobs[projectId]?.isActive == true
+                if (active && tasks[projectId]?.stage != Stage.ANALYZING) pendingAnalyses[projectId] = openWhenDone
+                active
+            }
+        if (busy) return
         launchTask(project.id, TaskState(Stage.ANALYZING, 0.0)) { analyze(project, openWhenDone) }
     }
 
@@ -151,7 +169,7 @@ class ImportPipeline(
         if (analysisFailed && remoteId != null) {
             startAnalysis(projectId)
         } else {
-            launchTask(projectId, TaskState(Stage.PROXY, 0.0)) { importAndUpload(projectId) }
+            launchTask(projectId, TaskState(Stage.PROXY, 0.0)) { importUploadAndAnalyze(projectId) }
         }
     }
 
@@ -166,6 +184,7 @@ class ImportPipeline(
         synchronized(lock) {
             jobs.remove(projectId)?.cancel()
             tasks.remove(projectId)
+            pendingAnalyses.remove(projectId)
             targets.remove(projectId)
         }
         project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
@@ -191,6 +210,7 @@ class ImportPipeline(
         synchronized(lock) {
             jobs.clear()
             tasks.clear()
+            pendingAnalyses.clear()
             targets.clear()
             videos = emptyMap()
             serverChecked = false
@@ -235,19 +255,29 @@ class ImportPipeline(
         }
     }
 
-    /** Ignores a task that was replaced or removed meanwhile ([reset], [remove]) so it cannot resurrect stale state. */
+    /**
+     * Ignores a task that was replaced or removed meanwhile ([reset], [remove]) so it cannot resurrect stale state.
+     *
+     * A queued analysis is always taken out here. Usually [importUploadAndAnalyze] consumed it already, but a
+     * [startAnalysis] from another thread can still queue one after that check and before this task is unregistered;
+     * after a success that request is started now instead of being lost, after a failure it is dropped.
+     */
     private fun finishTask(
         projectId: String,
         job: kotlinx.coroutines.Job?,
         error: String?,
     ) {
-        synchronized(lock) {
-            if (jobs[projectId] !== job) return
-            jobs.remove(projectId)
-            val stage = tasks[projectId]?.stage ?: Stage.PROXY
-            if (error == null) tasks.remove(projectId) else tasks[projectId] = TaskState(stage, error = error)
-        }
+        val queued =
+            synchronized(lock) {
+                if (jobs[projectId] !== job) return
+                jobs.remove(projectId)
+                val queued = pendingAnalyses.remove(projectId)
+                val stage = tasks[projectId]?.stage ?: Stage.PROXY
+                if (error == null) tasks.remove(projectId) else tasks[projectId] = TaskState(stage, error = error)
+                queued.takeIf { error == null }
+            }
         publish()
+        if (queued != null) startAnalysis(projectId, queued)
     }
 
     private fun setProgress(
@@ -290,6 +320,16 @@ class ImportPipeline(
     private fun remember(video: Video) {
         synchronized(lock) { videos = videos + (video.id to video) }
         publish()
+    }
+
+    /** Runs the import and, if an analysis was requested meanwhile (see [startAnalysis]), continues with it. */
+    private suspend fun importUploadAndAnalyze(projectId: String) {
+        importAndUpload(projectId)
+        val openWhenDone = synchronized(lock) { pendingAnalyses.remove(projectId) } ?: return
+        // Re-read: the upload stored the remote video id, and the court may have been saved meanwhile.
+        val project = store.get(projectId) ?: return
+        setProgress(projectId, Stage.ANALYZING, 0.0)
+        analyze(project, openWhenDone)
     }
 
     private suspend fun importAndUpload(projectId: String) {

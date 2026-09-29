@@ -4,6 +4,8 @@ import app.snipnet.shared.model.EditOp
 import app.snipnet.shared.model.EditOpKind
 import app.snipnet.shared.model.Segment
 import app.snipnet.shared.store.PendingSave
+import app.snipnet.shared.store.ProjectStore
+import app.snipnet.shared.store.openInMemoryDatabase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
@@ -78,6 +80,47 @@ class EditorOpenDuringFlushTest {
                 assertNull(store.get("p1")?.pendingSave)
                 val (_, uploaded) = server.uploads.single()
                 assertEquals(listOf(trim), uploaded.editLog)
+            }
+        }
+
+    @Test
+    fun theEditorDoesNotWaitForTheBackgroundFlushOfAnotherProject() =
+        runTest {
+            var next = 0
+            val twoProjects =
+                ProjectStore(openInMemoryDatabase(), newId = { "p${++next}" }, now = { 1L }, currentUserId = { "u1" })
+            twoProjects.create("/videos/other.mp4", remoteVideoId = "remote-1")
+            twoProjects.create("/videos/match.mp4", remoteVideoId = "remote-2")
+            twoProjects.setPendingSave("p1", PendingSave("s1", listOf(Segment(0, 10_000)), emptyList(), false))
+            val gatedQueue =
+                SaveQueue(
+                    twoProjects,
+                    loadSets = { server.sets },
+                    upload = { remoteId, save ->
+                        uploadStarted.complete(Unit)
+                        releaseUpload.await()
+                        server.upload(remoteId, save)
+                    },
+                )
+
+            val background = launch { gatedQueue.flush("p1", background = true) }
+            uploadStarted.await()
+
+            EditorStateHolder(
+                "p2",
+                twoProjects,
+                FakeEngine(),
+                gatedQueue,
+                loadSets = { listOf(prediction(threeRallies)) },
+                now = { 1L },
+                dispatcher = UnconfinedTestDispatcher(testScheduler),
+                retryDelayMs = 1_000_000,
+            ).use { holder ->
+                runCurrent()
+                assertFalse(holder.state.value.loading)
+                assertTrue(background.isActive)
+                releaseUpload.complete(Unit)
+                background.join()
             }
         }
 

@@ -16,6 +16,11 @@ data class VideoInfo(
     val audioCodec: String?,
     val audioSampleRate: Int,
     val audioChannels: Int,
+    /**
+     * Start timecode embedded in the file (`HH:MM:SS:FF`, or `HH:MM:SS;FF` for drop frame), which cameras write
+     * to the tmcd track or the `timecode` tag. Null when the file carries none.
+     */
+    val startTimecode: String? = null,
 ) {
     val hasAudio: Boolean get() = audioCodec != null && audioChannels > 0
 

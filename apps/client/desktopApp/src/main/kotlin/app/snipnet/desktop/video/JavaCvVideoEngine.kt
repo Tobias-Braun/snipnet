@@ -47,9 +47,16 @@ class JavaCvVideoEngine(
                     audioCodec = if (grabber.hasAudio()) grabber.audioCodecName else null,
                     audioSampleRate = if (grabber.hasAudio()) grabber.sampleRate else 0,
                     audioChannels = if (grabber.hasAudio()) grabber.audioChannels else 0,
+                    startTimecode = embeddedTimecode(grabber),
                 )
             }
         }
+
+    /** The `timecode` tag from the video stream or, failing that, the container, as cameras store it in either. */
+    private fun embeddedTimecode(grabber: FFmpegFrameGrabber): String? =
+        listOf(grabber.getVideoMetadata("timecode"), grabber.getMetadata("timecode"))
+            .firstOrNull { !it.isNullOrBlank() }
+            ?.trim()
 
     override suspend fun open(file: Path): VideoPlayer = JavaCvVideoPlayer(file, probe(file), audioOutput)
 

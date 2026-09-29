@@ -36,7 +36,7 @@ import pandas as pd
 from snipnet_ml.labels import Roi
 
 # Bump whenever the meaning of any feature column changes so cached results are not reused.
-FEATURE_VERSION = 2
+FEATURE_VERSION = 3
 
 _AUDIO_HOP = 128
 
@@ -52,8 +52,14 @@ class FeatureConfig:
     sample_rate: int = 16000
     # Hit band in Hz: ball hits are broadband clicks; wind and voices sit mostly below it.
     hit_band: tuple[float, float] = (1500.0, 7000.0)
-    # Minimum onset-strength peak height (absolute, in mel-flux units) that counts as a transient.
-    transient_delta: float = 4.0
+    # Minimum onset-strength peak height that counts as a transient, as a fraction of the video's own hit level (the
+    # `transient_reference_percentile` of its onset envelope), so the count does not depend on recording gain or
+    # microphone distance.
+    transient_delta: float = 0.4
+    transient_reference_percentile: float = 99.0
+    # Absolute lower bound (mel-flux units) for the threshold, so a video with only background noise does not have that
+    # noise scaled up into transients.
+    transient_min_delta: float = 2.0
     # Minimum spacing between two transients in seconds.
     transient_gap_s: float = 0.1
 
@@ -62,6 +68,10 @@ class FeatureConfig:
             raise ValueError("fps and window_s must be positive")
         if self.roi_expand < 0:
             raise ValueError("roi_expand must not be negative")
+        if self.transient_delta <= 0 or self.transient_min_delta < 0:
+            raise ValueError("transient_delta must be positive and transient_min_delta not negative")
+        if not 0 < self.transient_reference_percentile <= 100:
+            raise ValueError("transient_reference_percentile must be in (0, 100]")
 
 
 @dataclass(frozen=True)
@@ -288,6 +298,21 @@ def motion_series(frames: Iterable[tuple[float, np.ndarray]], roi: Roi, expand: 
     return MotionSeries(np.asarray(times), np.asarray(roi_values), np.asarray(outside_values), last_time)
 
 
+def transient_peaks(envelope: np.ndarray, config: FeatureConfig) -> np.ndarray:
+    """Frame indices of sharp onset-envelope peaks, with a threshold relative to the video's own loudness.
+
+    Onset strength scales with recording gain and microphone distance, so an absolute peak height would saturate on
+    hot recordings and find nothing on quiet ones. The height is therefore `transient_delta` times a high percentile
+    of this video's envelope (the level its loud hits reach), never below the absolute `transient_min_delta`.
+    """
+    reference = float(np.percentile(envelope, config.transient_reference_percentile))
+    delta = max(config.transient_delta * reference, config.transient_min_delta)
+    wait = max(1, round(config.transient_gap_s * config.sample_rate / _AUDIO_HOP))
+    return librosa.util.peak_pick(
+        envelope, pre_max=wait, post_max=wait, pre_avg=wait, post_avg=wait, delta=delta, wait=wait
+    )
+
+
 def audio_features(samples: np.ndarray, config: FeatureConfig, n_windows: int) -> tuple[np.ndarray, ...]:
     """Mean and max hit-band onset strength plus transient count per window."""
     mean = np.zeros(n_windows)
@@ -312,10 +337,7 @@ def audio_features(samples: np.ndarray, config: FeatureConfig, n_windows: int) -
     mean = np.divide(np.bincount(index, weights=envelope, minlength=n_windows), counts, out=mean, where=counts > 0)
     np.maximum.at(peak, index, envelope)
 
-    wait = max(1, round(config.transient_gap_s * config.sample_rate / _AUDIO_HOP))
-    peaks = librosa.util.peak_pick(
-        envelope, pre_max=wait, post_max=wait, pre_avg=wait, post_avg=wait, delta=config.transient_delta, wait=wait
-    )
+    peaks = transient_peaks(envelope, config)
     count = np.bincount(index[peaks], minlength=n_windows) if len(peaks) else count
     return mean, peak, count
 

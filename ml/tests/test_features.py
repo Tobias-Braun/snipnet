@@ -208,3 +208,43 @@ def test_audio_starting_after_video_is_padded_to_the_video_origin(synthetic, tmp
     plain_peak = int(np.argmax(np.abs(plain[: 5 * rate])))
     padded_peak = int(np.argmax(np.abs(padded[: 6 * rate])))
     assert padded_peak - plain_peak == pytest.approx(lead, abs=rate // 50)
+
+
+def _click_train(gain: float, noise: float, seconds: int = 10, rate: int = 16000) -> np.ndarray:
+    """Noise floor plus one broadband click every 0.4 s, all scaled by `gain` like a hotter or quieter recording."""
+    rng = np.random.default_rng(0)
+    samples = rng.normal(0.0, noise, seconds * rate)
+    for start in range(rate // 2, (seconds - 1) * rate, int(0.4 * rate)):
+        samples[start : start + 64] += rng.normal(0.0, 0.5, 64)
+    return (samples * gain).astype(np.float32)
+
+
+@pytest.mark.parametrize("gain", [0.05, 0.3, 1.0, 4.0])
+def test_transient_count_is_independent_of_recording_gain(gain) -> None:
+    config = FeatureConfig()
+    n_windows = 20
+    reference = features.audio_features(_click_train(1.0, 0.002), config, n_windows)[2].sum()
+    assert reference >= 20
+    assert features.audio_features(_click_train(gain, 0.002), config, n_windows)[2].sum() == reference
+
+
+def test_transient_threshold_is_relative_to_the_video_but_ignores_pure_noise() -> None:
+    config = FeatureConfig()
+    envelope = np.zeros(2000)
+    envelope[100::100] = 20.0
+    baseline = features.transient_peaks(envelope, config)
+    assert len(baseline) == 19
+    np.testing.assert_array_equal(features.transient_peaks(envelope * 5, config), baseline)
+    noise = np.random.default_rng(1).uniform(0.0, 1.0, 2000)
+    assert len(features.transient_peaks(noise, config)) == 0
+
+
+def test_transient_config_is_validated_and_part_of_the_cache_key() -> None:
+    with pytest.raises(ValueError, match="transient_delta"):
+        FeatureConfig(transient_delta=0)
+    with pytest.raises(ValueError, match="percentile"):
+        FeatureConfig(transient_reference_percentile=101)
+    roi = Roi(x=0.1, y=0.1, width=0.5, height=0.5)
+    assert features.cache_key("a" * 64, roi, FeatureConfig()) != features.cache_key(
+        "a" * 64, roi, FeatureConfig(transient_delta=0.2)
+    )

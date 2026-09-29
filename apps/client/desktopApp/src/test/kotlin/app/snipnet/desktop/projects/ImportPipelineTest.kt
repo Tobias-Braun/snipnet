@@ -469,10 +469,16 @@ class ImportPipelineTest {
 
             pipeline.startAnalysis("p1")
             pipeline.startAnalysis("p1", openWhenDone = false)
-            // Lets the poll loop run a few rounds, so a wrongly started second task would have sent its request.
-            kotlinx.coroutines.delay(200)
+            // Lets the running job succeed at the next poll: a request that was wrongly queued instead of ignored would
+            // only start its second job once this analysis ended, so the assertions must wait for that end.
+            jobs.add(0, "succeeded")
+            awaitRow { it.status == ProjectStatus.ANALYZED }
+            // The second wait covers a follow-up task that the first one would have launched while finishing.
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
 
             assertEquals(1, requests.count { it == "POST /v1/videos/v1/analyze" })
+            assertEquals(1, analyzed.size)
         }
 
     @Test

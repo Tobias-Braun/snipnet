@@ -12,7 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * given to [api] and written to [tokenStore]; [logout] removes both. The UI observes [user] to know whether a
  * session exists.
  *
- * @param onLoggedOut runs on logout so other per-account data (the local project list) can be dropped.
+ * @param onLoggedOut runs on logout so in-flight per-account work (such as running imports) can be stopped. Local projects
+ * are not dropped: they are scoped by user id and stay on disk for the next login of the same account.
  */
 class Session(
     private val api: SnipnetApi,

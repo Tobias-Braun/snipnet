@@ -178,7 +178,8 @@ class ImportPipelineTest {
 
     private val api = SnipnetApi(engine, "http://api.test")
     private var counter = 0
-    private val store = ProjectStore(openInMemoryDatabase(), newId = { "p${++counter}" }, now = { 1_000L })
+    private val store =
+        ProjectStore(openInMemoryDatabase(), newId = { "p${++counter}" }, now = { 1_000L }, currentUserId = { "u1" })
     private val pipeline =
         ImportPipeline(
             api = api,

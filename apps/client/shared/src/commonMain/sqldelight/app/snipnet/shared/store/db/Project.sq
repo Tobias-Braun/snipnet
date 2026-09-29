@@ -11,27 +11,29 @@ CREATE TABLE project (
     base_set_id TEXT,
     draft_edit_log_json TEXT,
     pending_save_json TEXT,
+    user_id TEXT,
     created_at_ms INTEGER NOT NULL,
     last_opened_ms INTEGER NOT NULL
 );
 
 CREATE INDEX project_last_opened ON project(last_opened_ms DESC);
+CREATE INDEX project_user ON project(user_id);
 
-selectAll:
-SELECT * FROM project ORDER BY last_opened_ms DESC, created_at_ms DESC;
+selectAllForUser:
+SELECT * FROM project WHERE user_id = ? ORDER BY last_opened_ms DESC, created_at_ms DESC;
 
 selectById:
 SELECT * FROM project WHERE id = ?;
 
 selectByRemoteVideoId:
-SELECT * FROM project WHERE remote_video_id = ?;
+SELECT * FROM project WHERE remote_video_id = ? AND user_id = ?;
 
 insert:
-INSERT INTO project(id, original_path, proxy_path, remote_video_id, court_json, draft_segments_json, created_at_ms, last_opened_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO project(id, user_id, original_path, proxy_path, remote_video_id, court_json, draft_segments_json, created_at_ms, last_opened_ms)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 selectWithPendingSave:
-SELECT id FROM project WHERE pending_save_json IS NOT NULL;
+SELECT id FROM project WHERE pending_save_json IS NOT NULL AND user_id = ?;
 
 updateProxyPath:
 UPDATE project SET proxy_path = ? WHERE id = ?;
@@ -59,6 +61,3 @@ UPDATE project SET last_opened_ms = ? WHERE id = ?;
 
 deleteById:
 DELETE FROM project WHERE id = ?;
-
-deleteAll:
-DELETE FROM project;

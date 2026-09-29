@@ -78,7 +78,10 @@ class FakeEngine(
     ) = Waveform(TEST_DURATION_MS, FloatArray(buckets) { (it % 10) / 10f })
 }
 
-fun newStore(): ProjectStore = ProjectStore(openInMemoryDatabase(), newId = { "p1" }, now = { 1L })
+fun newStore(): ProjectStore =
+    ProjectStore(openInMemoryDatabase(), newId = {
+        "p1"
+    }, now = { 1L }, currentUserId = { "u1" })
 
 /**
  * Stands in for `POST /v1/videos/:id/segment-sets`: records accepted saves and answers them with a user set whose id

@@ -51,6 +51,15 @@ data class PendingSave(
  * Persistence for [Project]s on top of the SQLDelight [database]. All methods are synchronous and cheap (single-row
  * statements on a local file), so callers on the UI thread may use them directly for small lists.
  *
+ * Projects are scoped per user: every project is stored with the id of the account that created it, and the list,
+ * the remote-id lookup and the pending-save query only return the projects of [currentUserId]. Nothing is deleted on
+ * logout, so unsaved drafts are still there when the same account signs in again, while another account never sees
+ * them. Lookups by local project id ([get]) and the single-row updates are not filtered: local ids are random and
+ * only reachable through a scoped list.
+ *
+ * @param currentUserId the id of the signed-in user, or null when nobody is signed in (then nothing is listed and
+ * [create] fails). Read on every call, so it may change over the life of the store.
+ *
  * @param newId generates the local id of a new project; injectable so tests get deterministic ids.
  * @param now clock in epoch milliseconds, injectable for the same reason.
  */
@@ -58,23 +67,35 @@ class ProjectStore(
     database: SnipnetDatabase,
     private val newId: () -> String,
     private val now: () -> Long,
+    private val currentUserId: () -> String?,
 ) {
     private val queries = database.projectQueries
 
-    /** All projects, most recently opened first. */
-    fun list(): List<Project> = queries.selectAll().executeAsList().map { it.toProject() }
+    /** The signed-in user's projects, most recently opened first; empty when nobody is signed in. */
+    fun list(): List<Project> {
+        val userId = currentUserId() ?: return emptyList()
+        return queries.selectAllForUser(userId).executeAsList().map { it.toProject() }
+    }
 
     fun get(id: String): Project? = queries.selectById(id).executeAsOneOrNull()?.toProject()
 
-    fun findByRemoteVideoId(remoteVideoId: String): Project? =
-        queries.selectByRemoteVideoId(remoteVideoId).executeAsOneOrNull()?.toProject()
+    fun findByRemoteVideoId(remoteVideoId: String): Project? {
+        val userId = currentUserId() ?: return null
+        val rows = queries.selectByRemoteVideoId(remoteVideoId, userId).executeAsList()
+        return rows.firstOrNull()?.toProject()
+    }
 
-    /** Registers a newly opened video file; it starts as the most recently opened project. */
+    /**
+     * Registers a newly opened video file for the signed-in user; it starts as the most recently opened project.
+     *
+     * @throws IllegalStateException when nobody is signed in.
+     */
     fun create(
         originalPath: String,
         proxyPath: String? = null,
         remoteVideoId: String? = null,
     ): Project {
+        val userId = checkNotNull(currentUserId()) { "Cannot create a project without a signed-in user" }
         val timestamp = now()
         val project =
             Project(
@@ -89,6 +110,7 @@ class ProjectStore(
             )
         queries.insert(
             id = project.id,
+            user_id = userId,
             original_path = project.originalPath,
             proxy_path = project.proxyPath,
             remote_video_id = project.remoteVideoId,
@@ -141,7 +163,10 @@ class ProjectStore(
     ) = queries.updatePendingSave(save?.let { SnipnetJson.encodeToString(PendingSave.serializer(), it) }, id)
 
     /** Projects with a save that still has to reach the server. */
-    fun withPendingSave(): List<Project> = queries.selectWithPendingSave().executeAsList().mapNotNull { get(it) }
+    fun withPendingSave(): List<Project> {
+        val userId = currentUserId() ?: return emptyList()
+        return queries.selectWithPendingSave(userId).executeAsList().mapNotNull { get(it) }
+    }
 
     /**
      * Records that the server accepted [saved] as the segment set [createdSetId]: later edits start from that set,
@@ -173,9 +198,6 @@ class ProjectStore(
     fun markOpened(id: String) = queries.updateLastOpened(now(), id)
 
     fun delete(id: String) = queries.deleteById(id)
-
-    /** Removes every project, used on logout so the next account does not see this account's videos. */
-    fun clear() = queries.deleteAll()
 
     private fun app.snipnet.shared.store.db.Project.toProject() =
         Project(

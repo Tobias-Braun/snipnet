@@ -490,6 +490,48 @@ describe('job routes', () => {
       expect(sets).toHaveLength(0);
     });
 
+    it('answers 500 and keeps the job running when the object store is unreachable during the ETag check', async () => {
+      await clearJobs();
+      const { jobId, videoId } = await queuedJob();
+      await app.db
+        .updateTable('videos')
+        .set({ proxy_etag: '"recorded"' })
+        .where('id', '=', videoId)
+        .execute();
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo');
+      objectInfo.mockResolvedValueOnce({ sizeBytes: 2048, etag: '"recorded"' });
+      expect((await claim()).statusCode).toBe(200);
+
+      objectInfo.mockRejectedValueOnce(new Error('storage down'));
+      let response;
+      try {
+        response = await post(`/internal/jobs/${jobId}/result`, {
+          modelVersion: 'm-1',
+          segments,
+          scores: null,
+        });
+        // Without MinIO the real objectInfo would throw as well, so make sure the 500 comes from the stubbed check.
+        expect(objectInfo).toHaveBeenCalledTimes(2);
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toMatchObject({ error: { code: 'internal' } });
+      const job = await app.db
+        .selectFrom('jobs')
+        .select(['status', 'attempts'])
+        .where('id', '=', jobId)
+        .executeTakeFirstOrThrow();
+      expect(job).toMatchObject({ status: 'running', attempts: 1 });
+      const sets = await app.db
+        .selectFrom('segment_sets')
+        .select('id')
+        .where('video_id', '=', videoId)
+        .execute();
+      expect(sets).toHaveLength(0);
+    });
+
     it('accepts an empty segment list and rejects a second result', async () => {
       await clearJobs();
       const { jobId } = await queuedJob();

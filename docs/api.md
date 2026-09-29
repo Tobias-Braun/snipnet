@@ -150,7 +150,10 @@ job's own claim.
 
 The same comparison runs twice more, so an overwrite after the claim is detected as well. `POST
 /internal/jobs/:id/result` checks the ETag before storing the prediction: on a mismatch (or a removed object) no
-prediction is stored, the job and the video are set to `failed` with the same error, and the worker gets `409`. The
+prediction is stored, the job and the video are set to `failed` with the same error, and the worker gets `409`. If
+the object store cannot be reached during that check, the result answers `500` and nothing is stored: the job stays
+`running` with its attempt count unchanged, so the worker may repeat the result `POST` while its lease is valid. A
+worker that instead reports a retryable failure through `POST /internal/jobs/:id/fail` spends an attempt as usual. The
 training export (`GET /v1/admin/training-export`) checks it per video and silently skips a video whose proxy no
 longer matches, because its prediction and labels describe another file. Videos without a recorded ETag are not
 checked.

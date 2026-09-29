@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir "uv>=0.12,<0.13"
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+# librosa compiles helpers with numba's on-disk cache; the non-root worker cannot write next to the installed
+# package and has no home directory, so without a writable cache dir importing librosa raises "no locator available".
+ENV NUMBA_CACHE_DIR=/tmp/numba-cache
 
 COPY pyproject.toml uv.lock .python-version ./
 COPY ml ./ml

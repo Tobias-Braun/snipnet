@@ -138,15 +138,32 @@ def build_dataset(
     downloader: Downloader = download_proxy,
     embedder: VisualEmbedder | None = None,
 ) -> Path:
-    """Download proxies, compute features and labels and write the dataset; returns the path of `dataset.json`."""
+    """Download proxies, compute features and labels and write the dataset; returns the path of `dataset.json`.
+
+    When `out_dir` already holds a dataset, the entries are merged into it: videos that are not part of `entries`
+    keep their examples, and a video that is part of them is rebuilt with its newer final set. This is what makes an
+    incremental export (`--since`) into an existing dataset directory add to it instead of replacing it. Merging
+    into a dataset built with different feature or embedding settings is refused, because its examples would not be
+    comparable.
+    """
     config = config or DatasetConfig()
     out = Path(out_dir)
+    features_settings = config.features.__dict__ | {"hit_band": list(config.features.hit_band)}
+    embedding_settings = config.embeddings.__dict__
+    path = out / "dataset.json"
+    previous: dict[str, dict] = {}
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing["features"] != features_settings or existing["embeddings"] != embedding_settings:
+            raise ValueError(f"{out} holds a dataset built with other feature or embedding settings")
+        previous = {video["videoId"]: video for video in existing["videos"]}
     (out / "examples").mkdir(parents=True, exist_ok=True)
     (out / "proxies").mkdir(exist_ok=True)
     embedder = embedder or VisualEmbedder(config.embeddings)
 
     index = []
     for entry in entries:
+        previous.pop(entry.video_id, None)
         proxy = out / "proxies" / f"{entry.video_id}.mp4"
         if not proxy.exists():
             downloader(entry.proxy_url, proxy)
@@ -166,12 +183,14 @@ def build_dataset(
                 "rallies": [{"startMs": r.start_ms, "endMs": r.end_ms} for r in entry.rallies],
             }
         )
+    # The split is recomputed for kept videos so a changed split seed or fraction applies to the whole dataset.
+    for video in previous.values():
+        video["split"] = assign_split(video["videoId"], config.fractions, config.split_seed)
     document = {
-        "features": config.features.__dict__ | {"hit_band": list(config.features.hit_band)},
-        "embeddings": config.embeddings.__dict__,
-        "videos": index,
+        "features": features_settings,
+        "embeddings": embedding_settings,
+        "videos": sorted([*previous.values(), *index], key=lambda video: video["videoId"]),
     }
-    path = out / "dataset.json"
     # The output directory is chosen by the operator on the command line, so writing below it is intended.
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")  # NOSONAR
     return path
@@ -238,7 +257,9 @@ def main(argv: list[str] | None = None) -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--export", type=Path, help="NDJSON file saved from the training export endpoint")
     source.add_argument("--api-url", help="API base URL; the admin token is read from ADMIN_TOKEN")
-    parser.add_argument("--since", help="ISO-8601 instant for an incremental export (with --api-url)")
+    parser.add_argument(
+        "--since", help="ISO-8601 instant for an incremental export (with --api-url), merged into an existing --out"
+    )
     parser.add_argument("--out", type=Path, required=True, help="dataset directory")
     parser.add_argument("--weights", choices=("imagenet", "random"), default="imagenet")
     parser.add_argument("--split-seed", type=int, default=DEFAULT_SPLIT_SEED)

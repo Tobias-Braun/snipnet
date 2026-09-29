@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from snipnet_ml import fixtures, load_model
+from snipnet_ml import labels as labels_module
 from snipnet_ml.dataset import (
     Dataset,
     DatasetConfig,
@@ -15,8 +16,9 @@ from snipnet_ml.dataset import (
     window_labels,
 )
 from snipnet_ml.embeddings import EmbeddingConfig
+from snipnet_ml.features import FeatureConfig
 from snipnet_ml.labels import Rally
-from snipnet_ml.learned import LearnedModel, next_version, resolve_model_dir
+from snipnet_ml.learned import LearnedModel, compute_window_features, next_version, resolve_model_dir
 from snipnet_ml.model import Court, Point, Roi
 from snipnet_ml.promote import compare, format_markdown
 from snipnet_ml.promote import main as promote_main
@@ -124,6 +126,37 @@ def test_dataset_splits_by_video_and_labels_from_final_set(pipeline) -> None:
     assert 0.2 < example.labels.mean() < 0.9
     assert example.features.matrix().shape == (len(example.labels), 5 + 576 + 64)
     assert len(example.rallies) == len(truth[example.video_id].rallies)
+
+
+@needs_ffmpeg
+def test_incremental_build_merges_into_existing_dataset(pipeline, tmp_path) -> None:
+    root, dataset, _, plan, truth = pipeline
+    target = tmp_path / "data"
+    shutil.copytree(dataset.directory, target)
+    config = DatasetConfig(embeddings=EmbeddingConfig(weights="random", crop_size=64))
+    updated = plan["train"][0]
+    corrected = [{"startMs": 1000, "endMs": 4000}]
+    line = export_line(updated, root / "source" / f"{updated}.mp4", truth[updated], corrected)
+
+    merged = Dataset(build_dataset(parse_export([line]), target, config).parent)
+
+    for split, expected in plan.items():
+        assert sorted(merged.video_ids(split)) == sorted(expected)
+    example = next(e for e in merged.examples("train") if e.video_id == updated)
+    assert example.rallies == [Rally(start_ms=1000, end_ms=4000)]
+    assert example.labels.sum() == 6
+    with pytest.raises(ValueError, match="other feature or embedding settings"):
+        build_dataset([], target, DatasetConfig(embeddings=EmbeddingConfig(weights="random", crop_size=96)))
+
+
+def test_window_features_require_matching_window_lengths(tmp_path) -> None:
+    with pytest.raises(ValueError, match="window lengths"):
+        compute_window_features(
+            tmp_path / "missing.mp4",
+            labels_module.Roi(x=0, y=0, width=1, height=1),
+            FeatureConfig(window_s=0.5),
+            EmbeddingConfig(weights="random", window_s=1.0),
+        )
 
 
 @needs_ffmpeg

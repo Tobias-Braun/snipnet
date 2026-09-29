@@ -85,6 +85,10 @@ def compute_window_features(
     embedder: VisualEmbedder | None = None,
 ) -> WindowFeatures:
     """v0 table and embeddings of one video; both parts are cached separately in `cache_dir` when it is given."""
+    if embedding_config.window_s != feature_config.window_s:
+        # The embeddings are bucketed into the rows of the v0 table, so a different window length would silently
+        # attach each embedding to the wrong time.
+        raise ValueError("the embedding and feature window lengths must be equal")
     table = extract_features(video_path, roi, feature_config, cache_dir)
     embeddings = extract_embeddings(video_path, roi, len(table), embedding_config, cache_dir, embedder)
     return WindowFeatures(table=table, embeddings=embeddings)

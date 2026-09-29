@@ -192,7 +192,9 @@ def train(dataset: Dataset, out_dir: str | Path, config: TrainConfig | None = No
             best_state = {k: v.detach().cpu().clone() for k, v in network.state_dict().items()}
             torch.save(checkpoint, run_dir / "best.pt")
 
-    assert best_state is not None
+    if best_state is None:
+        # Only reachable when every epoch's score was NaN: the loss diverged, so there is no model worth saving.
+        raise RuntimeError(f"training diverged (loss is NaN in every epoch); see {metrics_file}")
     network.load_state_dict(best_state)
     return save_model(out_dir, network, meta)
 

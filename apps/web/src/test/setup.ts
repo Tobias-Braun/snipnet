@@ -6,3 +6,19 @@ import { afterEach } from 'vitest';
 afterEach(() => {
   cleanup();
 });
+
+// jsdom has no matchMedia. Reporting `prefers-reduced-motion: reduce` keeps GSAP from registering
+// animations, so tests see the page's final markup without timelines or ScrollTrigger running.
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: query.includes(': reduce'),
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  }),
+});

@@ -3,9 +3,11 @@ import java.sql.DriverManager;
 
 /**
  * Started by smoke-test.sh limited to the modules of the jlink runtime that the installers bundle, with the app's own
- * jars on the classpath. It touches what the app needs at startup, using reflection so that compiling it only needs a JDK: the SQLite JDBC
- * driver (needs java.sql) and the bundled FFmpeg natives (need jdk.unsupported and friends). A module missing from
- * the runtime surfaces here as a NoClassDefFoundError or UnsatisfiedLinkError and the process exits non-zero.
+ * jars on the classpath. It touches what the app needs at startup: the SQLite JDBC driver (needs java.sql) and the
+ * bundled FFmpeg natives, the latter through reflection so that compiling the probe only needs a JDK. A module
+ * missing from the runtime surfaces here as a NoClassDefFoundError or UnsatisfiedLinkError and the process exits
+ * non-zero. Modules that these two paths do not touch (jdk.unsupported, java.management, ...) are covered by the
+ * suggestRuntimeModules comparison in smoke-test.sh instead.
  */
 public class RuntimeProbe {
     public static void main(String[] args) throws Exception {

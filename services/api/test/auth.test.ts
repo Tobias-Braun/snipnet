@@ -229,16 +229,15 @@ describe('auth routes', () => {
       };
 
       // Untrusted: every request counts against the peer (127.0.0.1) whatever the header claims.
-      await app.close();
       app = await buildApp({ config: { ...schema.config, trustProxy: false } });
       const untrusted = await exhaust((i) => `198.51.100.${String(i)}`);
-      expect(untrusted.at(-1)).toBe(429);
+      expect(untrusted).toEqual([...Array<number>(LOGIN_RATE_LIMIT.max).fill(401), 429]);
 
       // Trusted: the peer is the proxy, so each distinct client address gets its own budget.
       await app.close();
       app = await buildApp({ config: { ...schema.config, trustProxy: '127.0.0.1' } });
       const trusted = await exhaust((i) => `198.51.100.${String(i)}`);
-      expect(trusted.every((status) => status === 401)).toBe(true);
+      expect(trusted).toEqual(Array<number>(LOGIN_RATE_LIMIT.max + 1).fill(401));
     });
 
     it('does not rate limit registration', async () => {

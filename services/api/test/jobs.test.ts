@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
-import { createMigratedTestSchema, insertVideo, SEED_DURATION_MS } from './helpers/seed.js';
+import { createMigratedTestSchema, SEED_DURATION_MS, insertVideo } from './helpers/seed.js';
 
 const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
 const COURT = { roi: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 }, netPoint: { x: 0.4, y: 0.55 } };

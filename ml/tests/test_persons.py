@@ -69,22 +69,31 @@ def test_tracker_does_not_link_boxes_further_apart_than_the_foot_gate() -> None:
 
 
 def test_tracker_foot_gate_uses_isotropic_distance_and_can_be_disabled() -> None:
-    # On a 2:1 frame a normalized x shift of 0.2 equals 0.4 frame heights, more than one 0.3 high box.
+    # A normalized x shift of 0.2 is 0.67 heights of the 0.3 high box on a square frame, but on a 2:1 frame it
+    # equals 0.4 frame heights, which is more than one box height.
+    moved = (0.3, 0.1, 0.4, 0.4)
+    square = IouTracker(foot_gate=1.0, aspect=1.0)
+    first = square.update([(0.1, 0.1, 0.2, 0.4)])
+    assert square.update([moved])[0].track_id == first[0].track_id
     wide = IouTracker(foot_gate=1.0, aspect=2.0)
     first = wide.update([(0.1, 0.1, 0.2, 0.4)])
-    assert wide.update([(0.45, 0.1, 0.55, 0.4)])[0].track_id != first[0].track_id
+    assert wide.update([moved])[0].track_id != first[0].track_id
     off = IouTracker(foot_gate=0.0)
     first = off.update([(0.1, 0.1, 0.2, 0.4)])
-    assert off.update([(0.35, 0.1, 0.45, 0.4)])[0].track_id != first[0].track_id
+    assert off.update([moved])[0].track_id != first[0].track_id
 
 
 def test_tracker_prefers_iou_matches_over_foot_distance_matches() -> None:
     tracker = IouTracker(match_iou=0.2, max_missed=1)
-    first = tracker.update([(0.1, 0.1, 0.2, 0.4), (0.3, 0.1, 0.4, 0.4)])
-    # Track 1 stays put; track 0 jumps onto a spot nearer to track 1's old foot than to its own.
-    second = tracker.update([(0.31, 0.1, 0.41, 0.4), (0.25, 0.1, 0.35, 0.4)])
-    assert second[0].track_id == first[1].track_id
+    first = tracker.update([(0.3, 0.1, 0.4, 0.4)])
+    # The small box has exactly the track's foot point but hardly overlaps it; the shifted full-size box has a
+    # slightly larger foot distance but a high IoU. Foot distance alone would pick the small box.
+    small = (0.34, 0.3, 0.36, 0.4)
+    shifted = (0.33, 0.1, 0.43, 0.4)
+    assert box_iou(first[0].box, small) < 0.2 <= box_iou(first[0].box, shifted)
+    second = tracker.update([small, shifted])
     assert second[1].track_id == first[0].track_id
+    assert second[0].track_id != first[0].track_id
 
 
 def test_tracker_drops_tracks_after_too_many_missed_frames() -> None:

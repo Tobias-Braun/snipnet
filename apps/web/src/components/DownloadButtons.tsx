@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 
 import { RELEASES_URL } from '../content.ts';
-import { detectArch, detectOs, fetchLatestRelease, type DownloadOption, type LatestRelease } from '../releases.ts';
+import {
+  detectArch,
+  detectOs,
+  fetchLatestRelease,
+  type DownloadOption,
+  type LatestRelease,
+} from '../releases.ts';
 
 /**
  * Download call to action. It renders the releases page link immediately, then upgrades to a primary

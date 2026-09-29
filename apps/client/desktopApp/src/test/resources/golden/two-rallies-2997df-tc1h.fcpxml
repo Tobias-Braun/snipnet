@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+  <resources>
+    <format id="r1" frameDuration="1001/30000s" width="1920" height="1080"/>
+    <asset id="r2" name="match" src="file:///videos/match.mp4" start="107999892/30000s" duration="1799798/30000s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000"/>
+  </resources>
+  <library>
+    <event name="Snipnet">
+      <project name="match">
+        <sequence format="r1" duration="600600/30000s" tcStart="0s" tcFormat="DF">
+          <spine>
+            <asset-clip ref="r2" name="Rally 1" offset="0s" start="108150042/30000s" duration="300300/30000s" format="r1" tcFormat="DF"/>
+            <asset-clip ref="r2" name="Rally 2" offset="300300/30000s" start="108599491/30000s" duration="300300/30000s" format="r1" tcFormat="DF"/>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

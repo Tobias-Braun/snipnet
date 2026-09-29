@@ -1,0 +1,8 @@
+TITLE: match
+FCM: DROP FRAME
+
+001  AX       AA/V  C        01:00:05;00 01:00:15;00 01:00:00;00 01:00:10;00
+* FROM CLIP NAME: match.mp4
+
+002  AX       AA/V  C        01:00:19;29 01:00:29;29 01:00:10;00 01:00:20;00
+* FROM CLIP NAME: match.mp4

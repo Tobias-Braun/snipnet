@@ -32,6 +32,7 @@ object ProjectFiles {
     ): String {
         val rate = FrameRate.fromFps(info.frameRate)
         val origin = sourceStartFrames(info, rate)
+        val tcFormat = if (isDropFrame(info, rate)) "DF" else "NDF"
         // Clip starts are positions on the source's own timecode, so they include the embedded start timecode.
         val clips =
             ranges.map { origin + rate.framesAt(it.startMs) to rate.framesAt(it.endMs) - rate.framesAt(it.startMs) }
@@ -61,7 +62,7 @@ object ProjectFiles {
         out.appendLine("    <event name=\"Snipnet\">")
         out.appendLine("      <project name=\"${xml(name)}\">")
         out.appendLine(
-            "        <sequence format=\"r1\" duration=\"$sequenceDuration\" tcStart=\"0s\" tcFormat=\"NDF\">",
+            "        <sequence format=\"r1\" duration=\"$sequenceDuration\" tcStart=\"0s\" tcFormat=\"$tcFormat\">",
         )
         out.appendLine("          <spine>")
         var offset = 0L
@@ -70,7 +71,7 @@ object ProjectFiles {
                 "            <asset-clip ref=\"r2\" name=\"Rally ${index + 1}\" offset=\"${rate.rational(offset)}\" " +
                     "start=\"${rate.rational(
                         start,
-                    )}\" duration=\"${rate.rational(length)}\" format=\"r1\" tcFormat=\"NDF\"/>",
+                    )}\" duration=\"${rate.rational(length)}\" format=\"r1\" tcFormat=\"$tcFormat\"/>",
             )
             offset += length
         }
@@ -87,7 +88,9 @@ object ProjectFiles {
      * CMX3600 EDL with one cut event per range on the auxiliary reel `AX`, audio and video together. Source
      * timecodes continue from the timecode embedded in the file (00:00:00:00 when it has none), the record side
      * starts at 01:00:00:00 and runs without gaps.
-     * Timecodes count the nominal frame rate without drop frames. TITLE and clip name are cut to safe lengths.
+     * Timecodes count the nominal frame rate without drop frames, except for 29.97/59.94 fps sources whose
+     * embedded start timecode is drop frame (`;` separator): those are written as `FCM: DROP FRAME` with `;`
+     * timecodes on both sides so they match the camera's labels. TITLE and clip name are cut to safe lengths.
      *
      * Throws [ExportException] for nominal rates above 99 fps (for example 120 fps slow motion): the frame field
      * has two digits, and timecodes against a lower base rate would silently misplace every cut in the editor,
@@ -107,10 +110,18 @@ object ProjectFiles {
             )
         }
         val origin = sourceStartFrames(info, rate)
+        val dropFrame = isDropFrame(info, rate)
+        val timecode: (Long) -> String = if (dropFrame) rate::dropFrameTimecode else rate::timecode
         val out = StringBuilder()
         out.append("TITLE: ").appendLine(singleLine(name, EDL_MAX_TITLE_LENGTH))
-        out.appendLine("FCM: NON-DROP FRAME")
-        var record = RECORD_START_HOURS * 3600L * rate.nominal
+        out.appendLine(if (dropFrame) "FCM: DROP FRAME" else "FCM: NON-DROP FRAME")
+        // One hour of drop-frame timecode holds fewer real frames than one hour of nominal counting.
+        var record =
+            if (dropFrame) {
+                checkNotNull(rate.framesOf("%02d:00:00;00".format(RECORD_START_HOURS)))
+            } else {
+                RECORD_START_HOURS * 3600L * rate.nominal
+            }
         ranges.forEachIndexed { index, range ->
             val start = origin + rate.framesAt(range.startMs)
             val end = origin + rate.framesAt(range.endMs)
@@ -119,10 +130,10 @@ object ProjectFiles {
             out.appendLine(
                 "%03d  AX       AA/V  C        %s %s %s %s".format(
                     index + 1,
-                    rate.timecode(start),
-                    rate.timecode(end),
-                    rate.timecode(record),
-                    rate.timecode(recordEnd),
+                    timecode(start),
+                    timecode(end),
+                    timecode(record),
+                    timecode(recordEnd),
                 ),
             )
             out.append("* FROM CLIP NAME: ").appendLine(singleLine(clipName, EDL_MAX_CLIP_NAME_LENGTH))
@@ -136,6 +147,15 @@ object ProjectFiles {
         info: VideoInfo,
         rate: FrameRate,
     ): Long = info.startTimecode?.let { rate.framesOf(it) } ?: 0L
+
+    /** Whether the source's embedded start timecode is drop frame and the rate can express it. */
+    private fun isDropFrame(
+        info: VideoInfo,
+        rate: FrameRate,
+    ): Boolean {
+        val timecode = info.startTimecode?.trim() ?: return false
+        return rate.supportsDropFrame && ';' in timecode && rate.framesOf(timecode) != null
+    }
 
     /** Joins line breaks into spaces and cuts to [maxLength] characters without splitting a surrogate pair. */
     private fun singleLine(

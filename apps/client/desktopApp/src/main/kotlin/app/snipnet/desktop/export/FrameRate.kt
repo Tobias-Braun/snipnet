@@ -32,6 +32,29 @@ data class FrameRate(
         return "%02d:%02d:%02d:%02d".format(totalSeconds / 3600, totalSeconds / 60 % 60, totalSeconds % 60, frame)
     }
 
+    /** Whether drop-frame timecode is defined for this rate: only the NTSC 29.97 and 59.94 fps variants. */
+    val supportsDropFrame: Boolean get() = denominator == 1001 && nominal % 30 == 0
+
+    /**
+     * Drop-frame `HH:MM:SS;FF` timecode of [frames], the inverse of [framesOf] for `;` timecodes. Drop frame skips
+     * the first frame numbers of every minute except each tenth one so the label tracks wall-clock time.
+     * Rates without drop-frame support fall back to the non-drop [timecode].
+     */
+    fun dropFrameTimecode(frames: Long): String {
+        if (!supportsDropFrame) return timecode(frames)
+        val fps = nominal
+        val drop = fps / 15
+        val framesPerMinute = fps * 60L - drop
+        val framesPerTenMinutes = fps * 600L - drop * 9
+        val tenMinutes = frames / framesPerTenMinutes
+        val rest = frames % framesPerTenMinutes
+        // The first minute of each ten-minute block keeps all its frame numbers, the following nine drop `drop`.
+        val droppedInRest = if (rest < drop) 0L else drop * ((rest - drop) / framesPerMinute)
+        val nominalFrames = frames + drop * 9 * tenMinutes + droppedInRest
+        val text = timecode(nominalFrames)
+        return text.substring(0, text.length - 3) + ";" + text.substring(text.length - 2)
+    }
+
     /**
      * The frame index a `HH:MM:SS:FF` or drop-frame `HH:MM:SS;FF` [timecode] denotes, or null when it is not a
      * timecode. Drop-frame values (only defined for 29.97 and 59.94 fps) are converted to the real frame count.

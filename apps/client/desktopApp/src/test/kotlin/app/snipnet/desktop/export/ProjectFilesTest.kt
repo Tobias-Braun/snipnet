@@ -61,6 +61,53 @@ class ProjectFilesTest {
         assertEquals(1_800L, FrameRate(30000, 1001).framesOf("00:01:00;02"))
     }
 
+    private val dropFrameInfo = info.copy(frameRate = 30000.0 / 1001, startTimecode = "01:00:00;00")
+
+    @Test
+    fun edlUsesDropFrameTimecodesForADropFrameSource() {
+        assertEquals(
+            golden("two-rallies-2997df-tc1h.edl"),
+            ProjectFiles.edl("match", "match.mp4", dropFrameInfo, ranges),
+        )
+    }
+
+    @Test
+    fun fcpxmlMarksADropFrameSourceAsDf() {
+        assertEquals(
+            golden("two-rallies-2997df-tc1h.fcpxml"),
+            ProjectFiles.fcpxml("match", "file:///videos/match.mp4", dropFrameInfo, ranges),
+        )
+    }
+
+    @Test
+    fun aNonDropStartTimecodeAtNtscStaysNonDrop() {
+        val ndf = dropFrameInfo.copy(startTimecode = "01:00:00:00")
+        val edl = ProjectFiles.edl("m", "m.mp4", ndf, ranges)
+        assertTrue("FCM: NON-DROP FRAME" in edl, edl)
+        assertTrue(';' !in edl, edl)
+        assertTrue("tcFormat=\"NDF\"" in ProjectFiles.fcpxml("m", "file:///m.mp4", ndf, ranges))
+    }
+
+    @Test
+    fun aSemicolonTimecodeAtANonNtscRateIsNotDropFrame() {
+        val pal = info.copy(startTimecode = "01:00:00;00")
+        assertTrue("FCM: NON-DROP FRAME" in ProjectFiles.edl("m", "m.mp4", pal, ranges))
+    }
+
+    @Test
+    fun dropFrameTimecodesInvertParsing() {
+        val ntsc = FrameRate(30000, 1001)
+        assertEquals("01:00:00;00", ntsc.dropFrameTimecode(107_892))
+        assertEquals("00:00:59;29", ntsc.dropFrameTimecode(1_799))
+        assertEquals("00:01:00;02", ntsc.dropFrameTimecode(1_800))
+        assertEquals("00:10:00;00", ntsc.dropFrameTimecode(17_982))
+        assertEquals("00:09:59;29", ntsc.dropFrameTimecode(17_981))
+        assertEquals("00:01:00;04", FrameRate(60000, 1001).dropFrameTimecode(3_600))
+        for (frames in 0L..200_000L step 7) {
+            assertEquals(frames, ntsc.framesOf(ntsc.dropFrameTimecode(frames)), "frame $frames")
+        }
+    }
+
     @Test
     fun ntscRatesUseExactFractionsInFcpxmlAndNominalTimecodesInEdl() {
         val ntsc = info.copy(frameRate = 30000.0 / 1001)

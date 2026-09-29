@@ -85,6 +85,24 @@ class TimelineOpsTest {
     }
 
     @Test
+    fun trimOfSegmentShorterThanMinimumOnlyLengthens() {
+        // The API allows segments shorter than MIN_SEGMENT_MS, and here the neighbours touch both edges.
+        val tight =
+            Timeline.fromSegments(
+                durationMs = 10_000,
+                segments = listOf(Segment(0, 1_000), Segment(1_000, 1_100), Segment(1_100, 2_000)),
+            )
+        assertNull(tight.trimStart(2, 1_050, 0))
+        assertNull(tight.trimEnd(2, 1_050, 0))
+
+        val roomy = Timeline.fromSegments(10_000, listOf(Segment(1_000, 1_100)))
+        assertNull(roomy.trimStart(1, 1_050, 0))
+        assertEquals(800 to 1_100, roomy.trimStart(1, 800, 0).spanOf(1))
+        assertNull(roomy.trimEnd(1, 1_050, 0))
+        assertEquals(1_000 to 1_300, roomy.trimEnd(1, 1_300, 0).spanOf(1))
+    }
+
+    @Test
     fun splitCreatesTwoSegmentsWithFreshId() {
         val edit = timeline.split(15_000, 3)!!
         assertEquals(

@@ -46,6 +46,9 @@ private fun Timeline.neighbourBounds(segment: EditSegment): LongRange {
 /**
  * Moves the start edge of segment [id] to [newStartMs], clamped so the segment keeps at least
  * [MIN_SEGMENT_MS] and does not run into its predecessor. Returns null when nothing changes.
+ *
+ * Segments loaded from the API may already be shorter than [MIN_SEGMENT_MS]. Such a segment can only be
+ * lengthened, so the upper clamp never lies before its current start (an empty clamp range would throw).
  */
 fun Timeline.trimStart(
     id: Long,
@@ -54,12 +57,15 @@ fun Timeline.trimStart(
 ): Edit? {
     val segment = find(id) ?: return null
     val bounds = neighbourBounds(segment)
-    val start = newStartMs.coerceIn(bounds.first, segment.endMs - MIN_SEGMENT_MS)
+    val start = newStartMs.coerceIn(bounds.first, maxOf(segment.endMs - MIN_SEGMENT_MS, segment.startMs))
     if (start == segment.startMs) return null
     return replace(listOf(segment), listOf(segment.copy(startMs = start)), EditOpKind.TRIM, nowMs)
 }
 
-/** Mirror of [trimStart] for the end edge, clamped to the next segment or the video end. */
+/**
+ * Mirror of [trimStart] for the end edge, clamped to the next segment or the video end. A segment that is
+ * already shorter than [MIN_SEGMENT_MS] can only be lengthened.
+ */
 fun Timeline.trimEnd(
     id: Long,
     newEndMs: Long,
@@ -67,7 +73,7 @@ fun Timeline.trimEnd(
 ): Edit? {
     val segment = find(id) ?: return null
     val bounds = neighbourBounds(segment)
-    val end = newEndMs.coerceIn(segment.startMs + MIN_SEGMENT_MS, bounds.last)
+    val end = newEndMs.coerceIn(minOf(segment.startMs + MIN_SEGMENT_MS, segment.endMs), bounds.last)
     if (end == segment.endMs) return null
     return replace(listOf(segment), listOf(segment.copy(endMs = end)), EditOpKind.TRIM, nowMs)
 }

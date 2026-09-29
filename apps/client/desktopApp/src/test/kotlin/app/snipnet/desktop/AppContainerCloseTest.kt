@@ -60,6 +60,11 @@ class AppContainerCloseTest {
         assertFalse(drain.isAlive, "the save queue loop should be cancelled by close()")
     }
 
+    /**
+     * Only a Windows file lock makes deleting the directory fail while the connection leaks; on macOS and Linux an open
+     * SQLite file can be deleted anyway. That the connection is really closed is asserted by ClosableDatabaseTest in
+     * the shared module, so this test covers the container calling close() and the Windows behaviour.
+     */
     @Test
     fun closeReleasesTheDatabaseSoTheDataDirCanBeDeleted() {
         val container = container()

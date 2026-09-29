@@ -2,7 +2,7 @@ import type { FastifyPluginCallbackTypebox } from '@fastify/type-provider-typebo
 import Type from 'typebox';
 
 import { AppError } from '../errors.js';
-import { Court, Job, Video } from '../schemas.js';
+import { Court, CourtSuggestion, Job, Video } from '../schemas.js';
 import { toJob } from '../serialize.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -16,6 +16,7 @@ const IdParams = Type.Object({ id: Type.String() });
 export const jobRoutes: FastifyPluginCallbackTypebox = (app, _options, done) => {
   app.addSchema(Job);
   app.addSchema(Court);
+  app.addSchema(CourtSuggestion);
   app.addSchema(Video);
 
   const security = [{ bearerAuth: [] }];

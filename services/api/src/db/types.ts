@@ -26,6 +26,8 @@ export interface VideosTable {
   status: Generated<'created' | 'uploaded' | 'analyzing' | 'analyzed' | 'failed'>;
   /** `{ roi: {x,y,width,height}, netPoint: {x,y} }` once the user has marked the court. */
   court: ColumnType<unknown, string | null | undefined, string | null>;
+  /** `{ court, confidence }` proposed by the worker's net detection, null until it ran or when no net was found. */
+  court_suggestion: ColumnType<unknown, string | null | undefined, string | null>;
   /** Key of the proxy object in the S3 bucket. */
   object_key: string;
   /** ETag of the proxy object when `upload-complete` accepted it; the worker claim verifies it is unchanged. */
@@ -48,6 +50,17 @@ export interface JobsTable {
   created_at: Timestamp;
   started_at: Date | null;
   finished_at: Date | null;
+}
+
+export interface CourtDetectionTasksTable {
+  video_id: string;
+  status: Generated<'queued' | 'running' | 'succeeded' | 'failed'>;
+  attempts: Generated<number>;
+  worker_id: string | null;
+  /** A running task whose lease has expired can be claimed by another worker. */
+  lease_expires_at: Date | null;
+  error: string | null;
+  created_at: Timestamp;
 }
 
 export interface SegmentSetsTable {
@@ -75,6 +88,7 @@ export interface Database {
   users: UsersTable;
   videos: VideosTable;
   jobs: JobsTable;
+  court_detection_tasks: CourtDetectionTasksTable;
   segment_sets: SegmentSetsTable;
   waitlist: WaitlistTable;
 }

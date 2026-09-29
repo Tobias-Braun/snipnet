@@ -7,7 +7,7 @@ import Type from 'typebox';
 import type { JobsTable, VideosTable } from '../db/types.js';
 import { AppError } from '../errors.js';
 import { proxyKey } from '../plugins/storage.js';
-import { Court, CourtBody, Job, Video } from '../schemas.js';
+import { Court, CourtBody, CourtSuggestion, Job, Video } from '../schemas.js';
 import { toVideo } from '../serialize.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,6 +55,7 @@ function parseVideoId(id: string): string {
 export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) => {
   app.addSchema(Job);
   app.addSchema(Court);
+  app.addSchema(CourtSuggestion);
   app.addSchema(Video);
 
   const security = [{ bearerAuth: [] }];
@@ -274,13 +275,25 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
       // no-op that must not throw the video back in its lifecycle. The ETag is pinned by that first call only:
       // the presigned upload URL stays valid for an hour, so a later overwrite has to be detected by the worker
       // claim against this value instead of being adopted by a repeated call.
-      const updated = await app.db
-        .updateTable('videos')
-        .set({ status: 'uploaded', proxy_etag: object.etag, updated_at: new Date() })
-        .where('id', '=', video.id)
-        .where('status', '=', 'created')
-        .returningAll()
-        .executeTakeFirst();
+      // The court detection task is enqueued in the same transaction, so exactly the call that confirms the upload
+      // creates it and a repeated call cannot queue a second one.
+      const updated = await app.db.transaction().execute(async (trx) => {
+        const row = await trx
+          .updateTable('videos')
+          .set({ status: 'uploaded', proxy_etag: object.etag, updated_at: new Date() })
+          .where('id', '=', video.id)
+          .where('status', '=', 'created')
+          .returningAll()
+          .executeTakeFirst();
+        if (row !== undefined) {
+          await trx
+            .insertInto('court_detection_tasks')
+            .values({ video_id: row.id })
+            .onConflict((oc) => oc.column('video_id').doNothing())
+            .execute();
+        }
+        return row;
+      });
       return presentVideo(updated ?? (await findOwnedVideo(request.user.sub, video.id)));
     },
   );

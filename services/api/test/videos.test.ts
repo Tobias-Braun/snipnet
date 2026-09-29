@@ -23,6 +23,7 @@ interface VideoBody {
   proxySizeBytes: number;
   status: string;
   court: unknown;
+  courtSuggestion: unknown;
   createdAt: string;
   updatedAt: string;
   latestJob: unknown;
@@ -182,6 +183,29 @@ describe('video routes', () => {
       expect(response.statusCode).toBe(200);
       expect(response.json<VideoBody>()).toMatchObject({ id: video.id, status: 'uploaded' });
       expect(await objectExists(`proxies/${user.id}/${video.id}.mp4`)).toBe(true);
+    });
+
+    it('enqueues one court detection task, also when called repeatedly', async () => {
+      const user = await newUser();
+      const { video, upload } = await createVideo(user.auth, 16);
+      await uploadProxy(upload, new Uint8Array(16));
+      const complete = () =>
+        app.inject({ method: 'POST', url: `/v1/videos/${video.id}/upload-complete`, headers: user.auth });
+      const tasks = () =>
+        app.db.selectFrom('court_detection_tasks').selectAll().where('video_id', '=', video.id).execute();
+      expect(await tasks()).toHaveLength(0);
+
+      const first = await complete();
+      expect(first.json<VideoBody>().courtSuggestion).toBeNull();
+      expect(await tasks()).toMatchObject([{ status: 'queued', attempts: 0 }]);
+
+      await app.db
+        .updateTable('court_detection_tasks')
+        .set({ status: 'succeeded' })
+        .where('video_id', '=', video.id)
+        .execute();
+      await complete();
+      expect(await tasks()).toMatchObject([{ status: 'succeeded' }]);
     });
 
     it('is idempotent and keeps a later status', async () => {

@@ -2,7 +2,7 @@ import type { Selectable } from 'kysely';
 import type { Static } from 'typebox';
 
 import type { JobsTable, SegmentSetsTable, VideosTable } from './db/types.js';
-import type { Court, SegmentSet } from './schemas.js';
+import type { Court, CourtSuggestion, SegmentSet } from './schemas.js';
 
 /** Builds the API's `SegmentSet` from its row. Segments, scores and the edit log were validated on the way in. */
 export function toSegmentSet(row: Selectable<SegmentSetsTable>) {
@@ -49,6 +49,8 @@ export function toVideo(row: Selectable<VideosTable>, latestJob: Selectable<Jobs
     status: row.status,
     // The column is only written by the court endpoint, which validates the shape.
     court: row.court as Static<typeof Court> | null,
+    // Written only by the internal court-suggestion endpoint, which validates the shape.
+    courtSuggestion: row.court_suggestion as Static<typeof CourtSuggestion> | null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     latestJob: latestJob === undefined ? null : toJob(latestJob),

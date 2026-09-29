@@ -59,6 +59,18 @@ export const Court = Type.Object(courtFields, { $id: 'Court', additionalProperti
  */
 export const CourtBody = Type.Object(courtFields, { additionalProperties: false });
 
+/** Response form of a court proposal (`Court` by reference) with the detector's confidence. */
+export const CourtSuggestion = Type.Object(
+  { court: Type.Ref('Court'), confidence: Unit },
+  { $id: 'CourtSuggestion', additionalProperties: false },
+);
+
+/** Request form without `$id`s, see `CourtBody`. */
+export const CourtSuggestionBody = Type.Object(
+  { court: CourtBody, confidence: Unit },
+  { additionalProperties: false },
+);
+
 export const Video = Type.Object(
   {
     id: Type.String({ format: 'uuid' }),
@@ -76,6 +88,7 @@ export const Video = Type.Object(
       Type.Literal('failed'),
     ]),
     court: Type.Union([Type.Ref('Court'), Type.Null()]),
+    courtSuggestion: Type.Union([Type.Ref('CourtSuggestion'), Type.Null()]),
     createdAt: Timestamp,
     updatedAt: Timestamp,
     latestJob: Type.Union([Type.Ref('Job'), Type.Null()]),

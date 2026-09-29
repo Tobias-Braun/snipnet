@@ -56,13 +56,21 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows); `409` while a job is `queued`/`running` |
 | `POST /v1/videos/:id/upload-complete` | – | `200 Video` (status `uploaded`); `409` if object missing or size mismatch |
 | `PUT /v1/videos/:id/court` | `Court` | `200 Video` |
-| `POST /v1/videos/:id/analyze` | `{}` | `202 Job`; `409` if not uploaded, court missing, or a job is queued/running |
+| `POST /v1/videos/:id/analyze` | `{}` | `202 Job`; `409` if not uploaded (`created`), court missing, or a job is queued/running. Videos in `analyzed` or `failed` status can be analyzed again, see "Re-analysis" |
 | `GET /v1/jobs/:id` | – | `200 Job` |
 | `GET /v1/videos/:id/segment-sets` | – | `200 { items: SegmentSet[] }` (oldest first) |
 | `GET /v1/segment-sets/:id` | – | `200 SegmentSet` |
 | `POST /v1/videos/:id/segment-sets` | `{ parentSetId, segments, editLog, isFinal }` | `201 SegmentSet` (kind `user`) |
 | `POST /v1/waitlist` | `{ email, source? }` | `202 {}` (idempotent, rate limited per IP) |
 | `GET /v1/admin/training-export?since=<iso>` | – | `200` NDJSON, one line per video with a final user set of a consenting user: `{ video, proxyUrl, prediction: SegmentSet, final: SegmentSet }` |
+
+### Re-analysis
+
+`analyze` is allowed in every status except `created`, and it is rejected while a job is `queued`/`running`. A video in
+`analyzed` (re-analyze) or `failed` (retry) therefore gets a new job, and a successful job creates a new `prediction`
+SegmentSet. Earlier sets stay as history, so a video can have several prediction sets (and user sets descending from
+any of them); clients pick the set to show from `GET /v1/videos/:id/segment-sets` (oldest first) instead of assuming
+one prediction per video.
 
 ### Training export
 

@@ -1,0 +1,17 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+.placeholder {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  padding: 0 16px;
+  text-align: center;
+}

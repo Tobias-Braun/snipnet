@@ -9,3 +9,4 @@ timeline, export.
 - AI inference: Python worker (`services/inference`, `ml/`), runs only in the backend
 
 See [docs/PLAN.md](docs/PLAN.md) for the architecture and roadmap and [docs/api.md](docs/api.md) for the API contract.
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) explains how to run each part locally.

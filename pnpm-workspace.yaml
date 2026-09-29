@@ -1,0 +1,8 @@
+packages:
+  - apps/web
+  - services/api
+
+# esbuild (pulled in by tsx) only uses its install script to verify the platform binary, which pnpm already
+# installs through optional dependencies.
+allowBuilds:
+  esbuild: false

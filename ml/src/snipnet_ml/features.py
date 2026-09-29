@@ -177,12 +177,15 @@ def stream_origin(container: av.container.InputContainer) -> float:
 
 
 def decode_gray_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np.ndarray]]:
-    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`."""
+    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`, timed like `decode_frames`."""
     return decode_frames(path, fps, "gray")
 
 
 def decode_frames(path: str | Path, fps: float, pixel_format: str) -> Iterator[tuple[float, np.ndarray]]:
     """Yield `(timestamp_s, frame)` pairs resampled to `fps`, converted to the PyAV `pixel_format` (e.g. "gray").
+
+    Timestamps are relative to the timeline origin (see `stream_origin`), so the first frame of a proxy with a
+    non-zero start time is at 0 s; frames before the origin are skipped.
 
     This is a generator on purpose: an hour of 480p proxy at 5 fps is several GB of pixels, so frames are consumed one
     at a time instead of being stacked into a single array. It is the single home of the resampling logic.

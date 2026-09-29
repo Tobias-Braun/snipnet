@@ -44,6 +44,11 @@ sealed interface FlushResult {
  * else, so a save queued in an editor that has since been closed still goes out once the API is reachable again.
  * A single mutex keeps two flushes from posting the same save twice.
  *
+ * A save is only sent while the project belongs to the signed-in user, checked right before the request: the API
+ * attaches the current session's token, so after a logout and a login as someone else a save of the previous account
+ * would otherwise go out under the wrong identity and be refused or dropped. Such a save stays queued untouched and
+ * goes out when its owner signs in again.
+ *
  * @param loadSets fetches all segment sets of a remote video, oldest first. It is only called for a save queued
  *   without a parent (the editor started offline from a draft whose base set was never stored), because the server
  *   requires `parentSetId`; the newest user set, else the prediction, then stands in for the set the edits started
@@ -70,6 +75,7 @@ class SaveQueue(
     ): FlushResult =
         mutex.withLock {
             rejected.remove(projectId)
+            if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
             val project = store.get(projectId) ?: return@withLock FlushResult.Idle
             val save = project.pendingSave ?: return@withLock FlushResult.Idle
             val remoteId =
@@ -77,6 +83,9 @@ class SaveQueue(
                     ?: return@withLock FlushResult.Offline("The video is not uploaded yet.")
             try {
                 val parentSetId = save.parentSetId ?: latestSetId(remoteId)
+                // The set lookup suspends, so the account may have changed since the check above; the request
+                // would carry the new account's token.
+                if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
                 val created = upload(remoteId, save.copy(parentSetId = parentSetId))
                 val saved = FlushResult.Saved(created, store.markSaved(projectId, created.id, save))
                 onSaved(saved)

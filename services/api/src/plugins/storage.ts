@@ -1,5 +1,6 @@
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   NotFound,
   PutObjectCommand,
@@ -12,6 +13,9 @@ import type { S3Config } from '../config.js';
 
 /** How long a presigned upload URL stays valid. */
 export const UPLOAD_URL_TTL_SECONDS = 60 * 60;
+
+/** How long a presigned download URL for the inference worker stays valid. */
+export const DOWNLOAD_URL_TTL_SECONDS = 60 * 60;
 
 /** The only content type proxies are uploaded with; it is part of the signature, so clients cannot vary it. */
 export const PROXY_CONTENT_TYPE = 'video/mp4';
@@ -28,6 +32,11 @@ export interface PresignedUpload {
 export interface Storage {
   /** Presigned PUT for `key` that only accepts a `video/mp4` body of exactly `sizeBytes` bytes. */
   presignUpload: (key: string, sizeBytes: number) => Promise<PresignedUpload>;
+  /**
+   * Presigned GET for `key`, valid for `DOWNLOAD_URL_TTL_SECONDS`. It is meant for the inference worker, which runs
+   * next to the API, so it is signed for the internal endpoint rather than the public one.
+   */
+  presignDownload: (key: string) => Promise<string>;
   /** Size of the stored object in bytes, or `null` when the key does not exist. */
   objectSize: (key: string) => Promise<number | null>;
   /** Removes the object; deleting a key that does not exist is not an error. */
@@ -61,8 +70,8 @@ function createClient(config: S3Config, endpoint: string): S3Client {
 
 /**
  * Creates the storage operations for a bucket. Presigning is a local computation, but the host is part of the
- * signature, so it needs a client that is configured with the public endpoint. Requests the API makes itself
- * go through a second client on the internal endpoint.
+ * signature, so URLs for the desktop client need a client that is configured with the public endpoint. Requests
+ * the API makes itself, and URLs for the worker, go through a second client on the internal endpoint.
  */
 export function createStorage(config: S3Config): Storage & { close: () => void } {
   const internal = createClient(config, config.endpoint);
@@ -87,6 +96,13 @@ export function createStorage(config: S3Config): Storage & { close: () => void }
         headers: { 'Content-Type': PROXY_CONTENT_TYPE },
         expiresAt: new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000),
       };
+    },
+
+    async presignDownload(key) {
+      const command = new GetObjectCommand({ Bucket: config.bucket, Key: key });
+      // In Compose the public endpoint is `localhost` on the host, which the worker container cannot reach; the
+      // internal endpoint (`http://minio:9000`) is reachable from both the API and the worker.
+      return getSignedUrl(internal, command, { expiresIn: DOWNLOAD_URL_TTL_SECONDS });
     },
 
     async objectSize(key) {

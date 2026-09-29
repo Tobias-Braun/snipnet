@@ -6,6 +6,10 @@ import app.snipnet.desktop.auth.TokenStore
 import app.snipnet.desktop.court.CourtSelectionStateHolder
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
+import app.snipnet.desktop.projects.ImportPipeline
+import app.snipnet.desktop.projects.ProjectsStateHolder
+import app.snipnet.desktop.upload.HttpProxyUploader
+import app.snipnet.desktop.video.FfmpegProxyTranscoder
 import app.snipnet.desktop.video.JavaCvVideoEngine
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
@@ -27,7 +31,7 @@ import java.util.UUID
  */
 class AppContainer(
     dataDir: Path = defaultDataDir(),
-    engine: HttpClientEngine = CIO.create(),
+    private val engine: HttpClientEngine = CIO.create(),
     baseUrl: String = defaultBaseUrl(),
 ) {
     val windowSettingsStore = WindowSettingsStore(dataDir.resolve("window.json"))
@@ -46,7 +50,32 @@ class AppContainer(
         )
     }
 
-    val session = Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = { projectStore.clear() })
+    /**
+     * Import, upload and analysis run here for the whole app lifetime. A finished analysis opens the editor, but only
+     * when the user is still looking at the projects list, so it never yanks them out of another screen.
+     */
+    val pipeline: ImportPipeline by lazy {
+        ImportPipeline(
+            api = api,
+            store = projectStore,
+            videoEngine = videoEngine,
+            transcoder = FfmpegProxyTranscoder(),
+            uploader = HttpProxyUploader(engine),
+            proxyDir = dataDir.resolve("proxies"),
+            onAnalyzed = { project ->
+                if (navigator.current == Screen.Projects) navigator.push(Screen.Editor(project.id))
+            },
+        )
+    }
+
+    val session =
+        Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = {
+            pipeline.reset()
+            projectStore.clear()
+        })
+
+    /** Backs the projects screen; the caller closes it when the screen leaves the composition. */
+    fun projectsStateHolder() = ProjectsStateHolder(pipeline)
 
     /** Backs the login/register screen; the caller closes it when the screen leaves the composition. */
     fun authStateHolder() = AuthStateHolder(session, onAuthenticated = { navigator.resetTo(Screen.Projects) })

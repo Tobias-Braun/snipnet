@@ -25,7 +25,10 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 | `auth` | `Session` (login, register, restore, logout), `TokenStore` (`token` file, mode 600) and `AuthStateHolder`. |
 | `video` | `VideoEngine` (probe, open a player, thumbnails, waveform) on FFmpeg through JavaCV, and `ffmpegPath()` for the bundled `ffmpeg` executable. See `docs/adr/0001-video-engine.md`. |
 | `court` | Court and net selection: `FrameBox` (letterbox-aware pixel/normalized conversion), `CourtGeometry` (default ROI, move, resize) and `CourtSelectionStateHolder` (local save plus `PUT /v1/videos/:id/court`). |
-| `ui` | Composables. Screens are placeholders until their features land. |
+| `video` (transcode) | `ProxyTranscoder` runs the bundled ffmpeg with the proxy format of `docs/api.md`, parses `-progress` output and is cancellable. |
+| `upload` | `ProxyUploader` streams the proxy to the presigned URL with progress and retry with backoff. |
+| `projects` | `ImportPipeline` (app-wide: import, transcode, upload, analysis polling, retry/cancel), `ProjectRow` (badge derivation) and `ProjectsStateHolder`. The court screen calls `pipeline.startAnalysis(projectId)` after the court is saved and returns to the list, which shows the progress and opens the editor when the analysis succeeds. |
+| `ui` | Composables. The editor screen is a placeholder until its feature lands. |
 
 The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set. Local projects live in `snipnet.db` there.
 The API base URL defaults to `http://localhost:3000` and is overridden with `$SNIPNET_API_URL`.

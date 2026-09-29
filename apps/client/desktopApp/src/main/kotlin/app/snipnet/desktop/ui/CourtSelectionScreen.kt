@@ -72,7 +72,14 @@ fun CourtSelectionScreen(
 ) {
     val holder =
         remember(videoId) {
-            container.courtSelectionStateHolder(videoId, onSaved = { container.navigator.push(Screen.Editor(videoId)) })
+            // The analysis runs in the app-wide pipeline; the projects list shows its progress and opens the editor.
+            container.courtSelectionStateHolder(
+                videoId,
+                onSaved = {
+                    container.pipeline.startAnalysis(videoId)
+                    container.navigator.back()
+                },
+            )
         }
     DisposableEffect(holder) { onDispose { holder.close() } }
     val state by holder.state.collectAsState()

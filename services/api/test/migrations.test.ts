@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sql, type Kysely } from 'kysely';
+import { readFile } from 'node:fs/promises';
+
+import { sql, type Insertable, type Kysely } from 'kysely';
 
 import { createDb } from '../src/db/client.js';
 import { runMigrations } from '../src/db/migrate.js';
-import type { Database } from '../src/db/types.js';
+import type { Database, VideosTable } from '../src/db/types.js';
 import { createTestSchema, type TestSchema } from './helpers/db.js';
 import { insertVideo } from './helpers/seed.js';
 
@@ -98,6 +100,47 @@ describe('migrations', () => {
 
     await db.updateTable('jobs').set({ status: 'failed' }).where('id', '=', first.id).execute();
     await expect(db.insertInto('jobs').values({ video_id: video.id }).execute()).resolves.toBeDefined();
+  });
+
+  it('backfills court detection tasks for videos that predate the task table', async () => {
+    const user = await db
+      .insertInto('users')
+      .values({ email: 'backfill@example.com', password_hash: 'x' })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const seed = (name: string, values: Partial<Insertable<VideosTable>>) =>
+      insertVideo(db, { user_id: user.id, object_key: `proxies/backfill-${name}.mp4`, ...values });
+
+    const uploaded = await seed('uploaded', { status: 'uploaded' });
+    const failed = await seed('failed', { status: 'failed' });
+    const created = await seed('created', { status: 'created' });
+    const confirmed = await seed('confirmed', {
+      status: 'analyzed',
+      court: JSON.stringify({ roi: { x: 0, y: 0, width: 1, height: 1 }, netPoint: { x: 0.5, y: 0.5 } }),
+    });
+    const alreadyDone = await seed('done', { status: 'analyzed' });
+    await db
+      .insertInto('court_detection_tasks')
+      .values({ video_id: alreadyDone, status: 'succeeded', attempts: 2 })
+      .execute();
+
+    const migration = await readFile(
+      new URL('../migrations/004_backfill_court_detection_tasks.sql', import.meta.url),
+      'utf8',
+    );
+    // The migration already ran on the empty schema, so run its statement again against the seeded rows.
+    await sql.raw(migration).execute(db);
+
+    const tasks = await db
+      .selectFrom('court_detection_tasks')
+      .select(['video_id', 'status', 'attempts'])
+      .execute();
+    const byVideo = new Map(tasks.map((task) => [task.video_id, task]));
+    expect(byVideo.get(uploaded)).toMatchObject({ status: 'queued', attempts: 0 });
+    expect(byVideo.get(failed)).toMatchObject({ status: 'queued' });
+    expect(byVideo.has(created)).toBe(false);
+    expect(byVideo.has(confirmed)).toBe(false);
+    expect(byVideo.get(alreadyDone)).toMatchObject({ status: 'succeeded', attempts: 2 });
   });
 
   it('deletes dependent rows together with a video', async () => {

@@ -93,8 +93,11 @@ class HeuristicParams:
     # Segment cleanup, in seconds.
     min_rally_s: float = 2.0
     min_gap_s: float = 3.0
-    pad_before_s: float = 1.0
-    pad_after_s: float = 1.5
+    # Margin around each decoded run. The decoded edges are already accurate to about a window, so every second of
+    # padding is a second of boundary error against tight labels (1.0 / 1.5 s gave a 1.4 s mean boundary error and
+    # 0.77 frame accuracy on the synthetic fixture); half a second leaves a little safety margin without that.
+    pad_before_s: float = 0.5
+    pad_after_s: float = 0.5
 
     def __post_init__(self) -> None:
         self._check_numbers()

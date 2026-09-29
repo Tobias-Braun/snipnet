@@ -39,8 +39,20 @@ describe('loadConfig', () => {
     expect(config.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it('rejects a port that is not a valid TCP port', () => {
-    expect(() => loadConfig({ API_PORT: 'abc' })).toThrow(/API_PORT/);
-    expect(() => loadConfig({ API_PORT: '70000' })).toThrow(/API_PORT/);
+  it('treats empty variables as unset', () => {
+    const config = loadConfig({ API_PORT: '', API_HOST: ' ', LOG_LEVEL: '', APP_VERSION: '' });
+
+    expect(config).toMatchObject({ host: '0.0.0.0', port: 3000, logLevel: 'info' });
+    expect(config.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('reads explicit values', () => {
+    expect(
+      loadConfig({ API_PORT: '8080', API_HOST: '127.0.0.1', LOG_LEVEL: 'debug', APP_VERSION: '9.9.9' }),
+    ).toEqual({ host: '127.0.0.1', port: 8080, logLevel: 'debug', version: '9.9.9' });
+  });
+
+  it.each(['abc', '70000', '-1', '1e3', '0x1f', '80.5'])('rejects API_PORT=%s', (value) => {
+    expect(() => loadConfig({ API_PORT: value })).toThrow(/API_PORT/);
   });
 });

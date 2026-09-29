@@ -1,5 +1,6 @@
 """Worker configuration, read from environment variables documented in ``infra/.env.example``."""
 
+import math
 import socket
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -28,8 +29,9 @@ class Settings:
             poll_interval_s = float(raw_interval)
         except ValueError:
             raise ValueError(f"WORKER_POLL_INTERVAL_S must be a number, got {raw_interval!r}") from None
-        if poll_interval_s <= 0:
-            raise ValueError(f"WORKER_POLL_INTERVAL_S must be positive, got {raw_interval!r}")
+        # float() also parses "nan" and "inf", which would make the worker busy-loop or never poll again.
+        if not math.isfinite(poll_interval_s) or poll_interval_s <= 0:
+            raise ValueError(f"WORKER_POLL_INTERVAL_S must be a positive finite number, got {raw_interval!r}")
 
         return cls(
             api_url=env.get("API_URL", "http://localhost:3000").rstrip("/"),

@@ -33,7 +33,7 @@ def test_from_env_requires_internal_token(token: str) -> None:
         Settings.from_env({"INTERNAL_TOKEN": token})
 
 
-@pytest.mark.parametrize("interval", ["abc", "0", "-1"])
+@pytest.mark.parametrize("interval", ["abc", "0", "-1", "nan", "inf"])
 def test_from_env_rejects_invalid_poll_interval(interval: str) -> None:
     with pytest.raises(ValueError, match="WORKER_POLL_INTERVAL_S"):
         Settings.from_env({"INTERNAL_TOKEN": "secret", "WORKER_POLL_INTERVAL_S": interval})

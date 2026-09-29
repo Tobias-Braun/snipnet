@@ -12,7 +12,9 @@ import app.snipnet.shared.model.EditOp
  *
  * Drags produce a stream of tiny edits. Passing the same non-null `gestureKey` to [apply] for each of them
  * coalesces them into a single undo step and a single log entry whose `before` is the state at drag start and
- * whose `after` is the latest one. Any other apply, undo, redo or [endGesture] closes the open gesture.
+ * whose `after` is the latest one. Only edits of the same [app.snipnet.shared.model.EditOpKind] that touch the same
+ * segment ids are merged; an edit that differs in either starts a new entry even under the same key, so a log entry
+ * never pairs a `before` and `after` of unrelated segments. Any other apply, undo, redo or [endGesture] closes the open gesture.
  */
 data class EditHistory(
     val timeline: Timeline,
@@ -25,6 +27,8 @@ data class EditHistory(
         val segmentsBefore: List<EditSegment>,
         val op: EditOp,
         val gestureKey: Any?,
+        /** Ids of the segments the entry's first edit added, removed or changed; the identity used for coalescing. */
+        val touchedIds: Set<Long> = emptySet(),
     )
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
@@ -38,11 +42,19 @@ data class EditHistory(
     ): EditHistory {
         if (edit == null) return this
         val last = undoStack.lastOrNull()
+        val touched = touchedIds(timeline.segments, edit.timeline.segments)
+        val coalesces =
+            gestureKey != null &&
+                openGesture == gestureKey &&
+                last != null &&
+                last.gestureKey == gestureKey &&
+                last.op.op == edit.op.op &&
+                last.touchedIds == touched
         val stack =
-            if (gestureKey != null && openGesture == gestureKey && last != null && last.gestureKey == gestureKey) {
+            if (coalesces && last != null) {
                 undoStack.dropLast(1) + last.copy(op = last.op.copy(after = edit.op.after))
             } else {
-                undoStack + Entry(timeline.segments, edit.op, gestureKey)
+                undoStack + Entry(timeline.segments, edit.op, gestureKey, touched)
             }
         return EditHistory(edit.timeline, stack, emptyList(), gestureKey)
     }
@@ -64,6 +76,16 @@ data class EditHistory(
 
     /** Runs a view-only change (selection, playhead) that must not create an undo step. */
     fun updateView(transform: (Timeline) -> Timeline): EditHistory = copy(timeline = transform(timeline))
+
+    /** Ids present in only one of the lists or whose segment differs between them. */
+    private fun touchedIds(
+        before: List<EditSegment>,
+        after: List<EditSegment>,
+    ): Set<Long> {
+        val beforeById = before.associateBy { it.id }
+        val afterById = after.associateBy { it.id }
+        return (beforeById.keys + afterById.keys).filterTo(HashSet()) { beforeById[it] != afterById[it] }
+    }
 
     private fun restore(segments: List<EditSegment>): Timeline =
         timeline.copy(

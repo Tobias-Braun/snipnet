@@ -86,6 +86,27 @@ class EditHistoryTest {
     }
 
     @Test
+    fun sameGestureKeyOnDifferentSegmentsStartsNewEntry() {
+        var history = start.apply(start.timeline.trimEnd(1, 21_000, 0), "drag")
+        history = history.apply(history.timeline.trimEnd(2, 41_000, 0), "drag")
+        assertEquals(2, history.editLog.size)
+        assertEquals(listOf(Segment(10_000, 21_000)), history.editLog[0].after)
+        assertEquals(listOf(Segment(30_000, 40_000)), history.editLog[1].before)
+        assertEquals(listOf(Segment(30_000, 41_000)), history.editLog[1].after)
+
+        val undone = history.undo()
+        assertEquals(40_000L, undone.timeline.find(2)!!.endMs)
+        assertEquals(21_000L, undone.timeline.find(1)!!.endMs)
+    }
+
+    @Test
+    fun sameGestureKeyWithDifferentOpKindStartsNewEntry() {
+        var history = start.apply(start.timeline.trimEnd(1, 21_000, 0), "drag")
+        history = history.apply(history.timeline.delete(setOf(1), 0), "drag")
+        assertEquals(listOf(EditOpKind.TRIM, EditOpKind.DELETE), history.editLog.map { it.op })
+    }
+
+    @Test
     fun undoClosesOpenGesture() {
         var history = start.apply(start.timeline.trimEnd(1, 21_000, 0), "a")
         history = history.apply(history.timeline.trimEnd(1, 22_000, 0), "b").undo().redo()

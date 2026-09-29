@@ -298,6 +298,8 @@ def test_progress_is_reported_within_bounds_and_never_decreases(short_clip) -> N
     assert len(reported) > 5
     assert all(0 < value <= 1 for value in reported)
     assert reported == sorted(reported)
+    # The last sampled frame lies one sampling step before the end, so a correct fraction ends just short of 1.
+    assert reported[-1] > 0.9
 
 
 @needs_ffmpeg
@@ -316,6 +318,8 @@ def test_progress_stays_capped_when_the_container_duration_is_too_short(short_cl
 @needs_ffmpeg
 def test_progress_is_not_reported_without_a_declared_duration(short_clip, monkeypatch) -> None:
     video, roi = short_clip
+    # Stands in for a raw stream or pipe-written file: whether ffmpeg estimates a duration for those varies by
+    # format and version, while probe_duration returning 0 is exactly the condition compute_features branches on.
     monkeypatch.setattr(features, "probe_duration", lambda path: 0.0)
     reported: list[float] = []
     table = extract_features(video, roi, on_progress=reported.append)

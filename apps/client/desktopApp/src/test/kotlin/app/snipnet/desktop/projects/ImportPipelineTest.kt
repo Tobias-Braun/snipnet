@@ -330,6 +330,9 @@ class ImportPipelineTest {
             withTimeout(10_000) {
                 while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
             }
+            // The task must have ended before asserting, or a regression that carries on after the DELETE could still
+            // start the upload after these checks ran.
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
             assertTrue(store.list().isEmpty())
             assertTrue(pipeline.rows.value.isEmpty())
             assertEquals(0, uploader.uploaded.get())

@@ -17,6 +17,7 @@ import app.snipnet.desktop.video.JavaCvVideoEngine
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
 import app.snipnet.shared.api.SnipnetApi
+import app.snipnet.shared.store.ClosableDatabase
 import app.snipnet.shared.store.ProjectStore
 import app.snipnet.shared.store.openClosableDatabase
 import io.ktor.client.engine.HttpClientEngine
@@ -37,12 +38,15 @@ import java.util.UUID
  * @param engine HTTP engine of the API client; tests inject a mock engine.
  * @param baseUrl API root; defaults to `SNIPNET_API_URL` or the local development server.
  * @param videoEngineOverride replaces the JavaCV engine, so UI tests can run the screens without decoding real video.
+ * @param openDatabase opens the database file; tests hand in one whose driver they observe to check that [close]
+ *   releases the connection, which deleting the file cannot show on macOS and Linux.
  */
 class AppContainer(
     dataDir: Path = defaultDataDir(),
     private val engine: HttpClientEngine = CIO.create(),
     baseUrl: String = defaultBaseUrl(),
     videoEngineOverride: VideoEngine? = null,
+    openDatabase: (Path) -> ClosableDatabase = ::openClosableDatabase,
 ) : AutoCloseable {
     val windowSettingsStore = WindowSettingsStore(dataDir.resolve("window.json"))
 
@@ -55,7 +59,7 @@ class AppContainer(
     val api = SnipnetApi(engine, baseUrl)
 
     /** Kept separate from [projectStore] so [close] releases the connection only when it was ever opened. */
-    private val database = lazy { openClosableDatabase(dataDir.resolve("snipnet.db")) }
+    private val database = lazy { openDatabase(dataDir.resolve("snipnet.db")) }
 
     val projectStore: ProjectStore by lazy {
         ProjectStore(

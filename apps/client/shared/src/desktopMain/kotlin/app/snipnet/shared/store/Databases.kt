@@ -31,10 +31,11 @@ fun openClosableDatabase(file: Path): ClosableDatabase {
 }
 
 /**
- * Wraps [driver] in a [ClosableDatabase]. Split out of [openClosableDatabase] so a test can hand in a driver it
- * observes and check that [ClosableDatabase.close] really reaches it.
+ * Creates or migrates the schema on [driver] and wraps it in a [ClosableDatabase] that closes [driver]. Split out of
+ * [openClosableDatabase] so tests can hand in a driver they observe: deleting an open SQLite file succeeds on macOS and
+ * Linux, so watching the driver is the only portable way to see that a connection was released.
  */
-internal fun closableDatabaseOn(driver: SqlDriver): ClosableDatabase = ClosableDatabase(databaseOn(driver), driver)
+fun closableDatabaseOn(driver: SqlDriver): ClosableDatabase = ClosableDatabase(databaseOn(driver), driver)
 
 /** A throwaway database that lives only as long as the returned driver connection; used by tests. */
 fun openInMemoryDatabase(): SnipnetDatabase = databaseOn(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))

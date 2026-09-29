@@ -53,11 +53,22 @@ class ClosableDatabaseTest {
         db.close()
     }
 
+    /** The production opener creates missing parent directories, and closing it keeps what was written. */
     @Test
-    fun aFileBackedDatabaseCanBeReopenedAfterClose() {
+    fun aFileBackedDatabaseKeepsItsDataAcrossCloseAndReopen() {
         val dir = Files.createTempDirectory("snipnet-closable")
+        val file = dir.resolve("nested/snipnet.db")
         try {
-            repeat(2) { openClosableDatabase(dir.resolve("nested/snipnet.db")).close() }
+            openClosableDatabase(file).use { it.database.projectQueries.insertPendingVideoDelete("user-1", "video-1") }
+
+            val reopened =
+                openClosableDatabase(file).use {
+                    it.database.projectQueries
+                        .selectPendingVideoDeletes("user-1")
+                        .executeAsList()
+                }
+
+            assertEquals(listOf("video-1"), reopened)
         } finally {
             dir.deleteRecursively()
         }

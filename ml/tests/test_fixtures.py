@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 from snipnet_ml import fixtures
-from snipnet_ml.labels import Labels, load_labels, save_labels
+from snipnet_ml.labels import Court, Labels, Point, Roi, load_labels, save_labels
 
 needs_ffmpeg = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None, reason="ffmpeg is not installed"
@@ -123,3 +123,40 @@ def test_cli_writes_video_and_labels(tmp_path) -> None:
     labels = load_labels(tmp_path / "f.labels.json")
     assert labels.video == "f.mp4"
     assert out.stat().st_size > 0
+
+
+def _court(x: float, width: float) -> Court:
+    return Court(roi=Roi(x=x, y=0.2, width=width, height=0.6), net_point=Point(x=x + width / 2, y=0.5))
+
+
+def test_distractors_stay_outside_the_roi_for_custom_courts() -> None:
+    for court in (fixtures.DEFAULT_COURT, _court(0.0, 0.75), _court(0.3, 0.7), _court(0.1, 0.5)):
+        roi = court.roi
+        for x in fixtures._distractor_columns(court):
+            end = x + fixtures._DISTRACTOR_SIZE
+            assert end <= roi.x * fixtures.WIDTH or x >= (roi.x + roi.width) * fixtures.WIDTH
+            assert x >= 0
+            assert end <= fixtures.WIDTH
+
+
+def test_court_without_margin_is_rejected(tmp_path) -> None:
+    with pytest.raises(ValueError, match="no margin"):
+        fixtures.generate_video(tmp_path / "f.mp4", duration_s=10, court=_court(0.02, 0.96))
+
+
+@needs_ffmpeg
+def test_no_distractor_motion_inside_a_wide_custom_court(tmp_path) -> None:
+    # The ROI spans x 0..360, so only the right margin is free and both distractors must live there.
+    out = tmp_path / "f.mp4"
+    labels = fixtures.generate_video(out, duration_s=20, seed=3, court=_court(0.0, 0.75))
+
+    def outside(second: int) -> bool:
+        return all((second + 1) * 1000 <= r.start_ms - 200 or second * 1000 >= r.end_ms + 200 for r in labels.rallies)
+
+    roi_motion = _luma_motion_per_second(out, "340:154:4:58")
+    margin_motion = _luma_motion_per_second(out, "116:270:364:0")
+    quiet = [s for s in range(len(roi_motion)) if outside(s)]
+    assert quiet
+    for s in quiet:
+        assert roi_motion[s] < 20_000, f"distractor motion inside the ROI at {s}s"
+        assert margin_motion[s] > 50_000, f"distractor not visible in the right margin at {s}s"

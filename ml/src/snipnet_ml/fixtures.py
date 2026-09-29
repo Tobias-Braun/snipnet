@@ -28,6 +28,10 @@ _MIN_RALLY_S = 5.0
 _MAX_RALLY_S = 9.0
 _MIN_GAP_S = 3.0
 _CLICK_PERIOD_S = 0.7
+_DISTRACTOR_SIZE = 20
+# Free pixels required in a margin beside the ROI (on top of the distractor itself) so that neither the moving
+# square nor the encoder's motion smear touches the ROI or the frame edge.
+_MARGIN_CLEARANCE = 8
 
 
 def ffmpeg_available() -> bool:
@@ -63,6 +67,32 @@ def _click_expression(rallies: list[Rally]) -> str:
     return "+".join(terms) or "0"
 
 
+def _distractor_columns(court: Court) -> list[float]:
+    """Left x positions of the two edge distractors, both outside the court ROI.
+
+    Each side margin (left of and right of the ROI) that is wide enough for a distractor plus clearance is used.
+    With both margins available one distractor goes to each; with only one, both share it at different x
+    positions. Raises ValueError for a court that leaves no usable margin, since the fixture could then not
+    keep motion outside the rallies away from the ROI.
+    """
+    roi = court.roi
+    right_start = (roi.x + roi.width) * WIDTH
+    needed = _DISTRACTOR_SIZE + _MARGIN_CLEARANCE
+    # (start, width) of each margin that fits a distractor.
+    margins = [m for m in ((0.0, roi.x * WIDTH), (right_start, WIDTH - right_start)) if m[1] >= needed]
+    if not margins:
+        raise ValueError(
+            f"court ROI leaves no margin of at least {needed}px left or right of it in the {WIDTH}px frame "
+            "for the edge distractors"
+        )
+    first_start, first_width = margins[0]
+    last_start, last_width = margins[-1]
+    return [
+        first_start + 0.1 * (first_width - _DISTRACTOR_SIZE),
+        last_start + 0.72 * (last_width - _DISTRACTOR_SIZE),
+    ]
+
+
 def _filter_graph(rallies: list[Rally], court: Court, rng: random.Random) -> str:
     roi = court.roi
     left, top = roi.x * WIDTH, roi.y * HEIGHT
@@ -76,13 +106,13 @@ def _filter_graph(rallies: list[Rally], court: Court, rng: random.Random) -> str
     ]
     last = "bg1"
 
-    # Distractors keep moving for the whole video inside the left and right margins, outside the ROI. Their colour
+    # Distractors keep moving for the whole video inside a side margin outside the ROI. Their colour
     # is dark so that they differ from the background in luma too: motion features typically work on grayscale,
     # and a mid-red of the same brightness as the green court would be invisible to them.
-    for index, side_x in enumerate((0.03 * WIDTH, 0.9 * WIDTH)):
+    for index, side_x in enumerate(_distractor_columns(court)):
         speed = rng.uniform(1.5, 3.0)
         phase = rng.uniform(0, 6.28)
-        filters.append(f"color=c=0x501818:s=20x20:r={FPS}[d{index}]")
+        filters.append(f"color=c=0x501818:s={_DISTRACTOR_SIZE}x{_DISTRACTOR_SIZE}:r={FPS}[d{index}]")
         filters.append(
             f"[{last}][d{index}]overlay=x={side_x:.0f}:"
             f"y='{HEIGHT / 2 - 10:.0f}+{HEIGHT * 0.35:.0f}*sin({speed:.3f}*t+{phase:.3f})':eval=frame[dv{index}]"
@@ -117,6 +147,7 @@ def generate_video(
     """Render the synthetic proxy video to `output` and return the ground-truth labels."""
     if duration_s <= 0:
         raise ValueError("duration_s must be positive")
+    _distractor_columns(court)
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is required to generate fixtures but was not found on PATH")
     output = Path(output)

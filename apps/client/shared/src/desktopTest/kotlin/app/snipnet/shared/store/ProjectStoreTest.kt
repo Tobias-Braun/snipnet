@@ -218,6 +218,9 @@ class ProjectStoreTest {
         assertNull(project.baseSetId)
         assertNull(project.pendingSave)
         assertEquals(emptyList(), project.draftEditLog)
+        // Migration 3 created the pending delete table.
+        migrated.addPendingVideoDelete("remote-1")
+        assertEquals(listOf("remote-1"), migrated.pendingVideoDeletes())
     }
 
     @Test

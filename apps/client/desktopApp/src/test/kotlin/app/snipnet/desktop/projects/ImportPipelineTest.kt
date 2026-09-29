@@ -397,9 +397,36 @@ class ImportPipelineTest {
             withTimeout(10_000) {
                 while (requests.count { it == "DELETE /v1/videos/v1" } < 30) kotlinx.coroutines.delay(10)
             }
+            // Ten retry intervals: the in-memory loop has given up, so only the refresh below can finish the delete.
+            kotlinx.coroutines.delay(200)
+            assertEquals(30, requests.count { it == "DELETE /v1/videos/v1" })
             assertEquals(listOf("v1"), store.pendingVideoDeletes())
 
             deleteConflicts.set(0)
+            awaitPendingDeletesEmpty(pipeline)
+        }
+
+    @Test
+    fun aRefreshLeavesAPendingDeleteAloneWhileTheVideosJobIsStillRunning() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteOffline = true
+            assertTrue(pipeline.remove("p1"))
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            deleteOffline = false
+            // A job started elsewhere now holds the video, so the server list reports it with a running job.
+            videoStatus = "analyzing"
+
+            pipeline.refresh()
+            kotlinx.coroutines.delay(200)
+
+            assertEquals(1, requests.count { it == "DELETE /v1/videos/v1" })
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+
+            videoStatus = "analyzed"
             awaitPendingDeletesEmpty(pipeline)
         }
 

@@ -1,0 +1,9 @@
+-- Version 4: server videos that still have to be deleted. A video removed while the server refused (409, a job holds
+-- it), while the server was unreachable or while the app was closed would otherwise stay on the server for good,
+-- because the local project row that knew its remote id is already gone. Entries are scoped to the account that owns
+-- the video, as the delete needs that account's token.
+CREATE TABLE pending_video_delete (
+    user_id TEXT NOT NULL,
+    remote_video_id TEXT NOT NULL,
+    PRIMARY KEY (user_id, remote_video_id)
+);

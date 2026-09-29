@@ -55,6 +55,26 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun pendingVideoDeletesAreScopedToTheUserAndDeduplicated() {
+        val store = store()
+        store.addPendingVideoDelete("v1")
+        store.addPendingVideoDelete("v1")
+        store.addPendingVideoDelete("v2")
+        signedIn = "u2"
+        store.addPendingVideoDelete("v3")
+        assertEquals(listOf("v3"), store.pendingVideoDeletes())
+
+        signedIn = "u1"
+        assertEquals(listOf("v1", "v2"), store.pendingVideoDeletes())
+        store.removePendingVideoDelete("v1")
+        assertEquals(listOf("v2"), store.pendingVideoDeletes())
+
+        signedIn = null
+        store.addPendingVideoDelete("v4")
+        assertEquals(emptyList(), store.pendingVideoDeletes())
+    }
+
+    @Test
     fun ownershipIsCheckedAgainstTheCurrentUser() {
         val store = store()
         val id = store.create("/a.mp4").id
@@ -198,6 +218,9 @@ class ProjectStoreTest {
         assertNull(project.baseSetId)
         assertNull(project.pendingSave)
         assertEquals(emptyList(), project.draftEditLog)
+        // Migration 3 created the pending delete table.
+        migrated.addPendingVideoDelete("remote-1")
+        assertEquals(listOf("remote-1"), migrated.pendingVideoDeletes())
     }
 
     @Test

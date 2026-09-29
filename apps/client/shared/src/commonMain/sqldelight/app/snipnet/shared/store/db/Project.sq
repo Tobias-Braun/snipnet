@@ -19,6 +19,22 @@ CREATE TABLE project (
 CREATE INDEX project_last_opened ON project(last_opened_ms DESC);
 CREATE INDEX project_user ON project(user_id);
 
+-- Server videos of deleted projects that the server has not confirmed as deleted yet (see migration 3).
+CREATE TABLE pending_video_delete (
+    user_id TEXT NOT NULL,
+    remote_video_id TEXT NOT NULL,
+    PRIMARY KEY (user_id, remote_video_id)
+);
+
+insertPendingVideoDelete:
+INSERT OR IGNORE INTO pending_video_delete(user_id, remote_video_id) VALUES (?, ?);
+
+selectPendingVideoDeletes:
+SELECT remote_video_id FROM pending_video_delete WHERE user_id = ? ORDER BY rowid;
+
+deletePendingVideoDelete:
+DELETE FROM pending_video_delete WHERE user_id = ? AND remote_video_id = ?;
+
 selectAllForUser:
 SELECT * FROM project WHERE user_id = ? ORDER BY last_opened_ms DESC, created_at_ms DESC;
 

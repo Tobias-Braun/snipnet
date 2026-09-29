@@ -1,21 +1,38 @@
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import Fastify, { type FastifyServerOptions } from 'fastify';
+import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 
-import { healthRoutes } from './routes/health.js';
+import type { AppConfig } from './config.js';
+import { dbPlugin } from './plugins/db.js';
+import { errorsPlugin } from './plugins/errors.js';
+import { openapiPlugin } from './plugins/openapi.js';
+import { generateRequestId, requestIdPlugin } from './plugins/request-id.js';
+import { v1Routes } from './routes/index.js';
+import { ErrorResponse } from './schemas.js';
 
 export interface AppOptions {
-  /** Reported by `GET /v1/health`; the server passes the package version. */
-  version: string;
+  config: AppConfig;
   logger?: FastifyServerOptions['logger'];
 }
 
 /**
  * Builds the Fastify instance without binding a port, so tests can drive it through `app.inject()` and the
- * server entry point stays a thin wrapper around configuration and `listen()`.
+ * server entry point stays a thin wrapper around configuration, migrations and `listen()`.
  */
-export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? false });
+export async function buildApp(options: AppOptions) {
+  const { config } = options;
+  const app = Fastify({
+    logger: options.logger ?? false,
+    genReqId: generateRequestId,
+    // Closes idle keep-alive connections on shutdown so `close()` does not wait for clients to hang up.
+    forceCloseConnections: 'idle',
+  }).withTypeProvider<TypeBoxTypeProvider>();
 
-  await app.register(healthRoutes, { prefix: '/v1', version: options.version });
+  app.addSchema(ErrorResponse);
+  await app.register(requestIdPlugin);
+  await app.register(errorsPlugin);
+  await app.register(dbPlugin, { database: config.database });
+  await app.register(openapiPlugin, { version: config.version });
+  await app.register(v1Routes, { prefix: '/v1', version: config.version });
 
   return app;
 }

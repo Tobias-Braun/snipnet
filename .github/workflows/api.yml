@@ -29,6 +29,29 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # Integration tests run against a real Postgres, each test file in its own throwaway schema.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: snipnet
+          # The container is only reachable from this job, so it skips password checks.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: snipnet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U snipnet -d snipnet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: snipnet
+      # Required by the config schema; ignored by the server because of trust authentication.
+      PGPASSWORD: unused-with-trust-auth
+      PGDATABASE: snipnet
     defaults:
       run:
         working-directory: services/api
@@ -44,3 +67,6 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
+      - name: Build the Docker image
+        working-directory: .
+        run: docker build -f services/api/Dockerfile .

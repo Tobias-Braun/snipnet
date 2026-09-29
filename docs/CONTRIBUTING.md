@@ -49,23 +49,33 @@ including its data.
 
 `infra/.env.example` documents every variable used by the stack, the API and the worker. Secrets have no
 defaults: Compose refuses to start until `infra/.env` provides them. To run the API or worker outside Docker
-with the same settings, load the file first: `set -a; . infra/.env; set +a`. The API and worker services are
-still commented out in the compose file; they are added by their own issues.
+with the same settings, load the file first: `set -a; . infra/.env; set +a`. The `api`, `worker` and `web` services
+are part of the compose file too; `docker compose -f infra/docker-compose.yml up -d --build api` (re)builds and
+starts only the API with its dependencies.
 
 ## API (`services/api`)
 
-Fastify + TypeScript, tested with Vitest.
+Fastify + TypeScript, Postgres through Kysely, tested with Vitest. The configuration is read from the
+environment and validated at startup (missing variables abort with a list of what to fix). The server applies
+pending SQL migrations from `services/api/migrations/` on startup; add a new numbered `.sql` file for every
+schema change. The OpenAPI document is served at `/v1/openapi.json`.
 
 ```sh
-pnpm --filter @snipnet/api dev        # watch mode on API_PORT (default 3000)
+pnpm --filter @snipnet/api dev        # watch mode on API_PORT (default 3000); needs the env loaded, see above
+pnpm --filter @snipnet/api migrate    # apply migrations without starting the server
 curl localhost:3000/v1/health
-pnpm --filter @snipnet/api test
+pnpm --filter @snipnet/api test       # integration tests need a Postgres, see below
 pnpm --filter @snipnet/api lint       # ESLint + Prettier check
 pnpm --filter @snipnet/api typecheck
 pnpm --filter @snipnet/api build      # compiles to dist/, run with `pnpm --filter @snipnet/api start`
 ```
 
 `pnpm --filter @snipnet/api format` fixes formatting.
+
+Integration tests connect to the Postgres given by the standard `PG*` variables (defaults: `localhost:5432`,
+user and database `snipnet`, which is what CI provides; `PGPASSWORD` must be set) and create a random schema
+per test file that is dropped afterwards, so they can share the database of `make infra-up` without touching
+its data: run them with `set -a; . infra/.env; set +a` loaded.
 
 ## Landing page (`apps/web`)
 

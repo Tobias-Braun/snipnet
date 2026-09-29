@@ -1,12 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema, insertVideo } from './helpers/seed.js';
 
 const ADMIN = { authorization: 'Bearer test-admin-token-0123456789' };
-const DURATION_MS = 90_000;
 const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
 const DAY_SECONDS = 24 * 60 * 60;
 
@@ -23,13 +21,7 @@ describe('training export', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
     app = await buildApp({
       config: { ...schema.config, s3: { ...schema.config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } },
     });
@@ -56,23 +48,13 @@ describe('training export', () => {
 
   async function newVideo(userId: string): Promise<{ videoId: string; predictionId: string }> {
     counter += 1;
-    const video = await app.db
-      .insertInto('videos')
-      .values({
-        user_id: userId,
-        filename: `match-${String(counter)}.mov`,
-        duration_ms: DURATION_MS,
-        width: 854,
-        height: 480,
-        fps: 15,
-        proxy_size_bytes: 2048,
-        status: 'analyzed',
-        object_key: `proxies/${userId}/export-${String(counter)}.mp4`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    const prediction = await newSet(video.id, 'prediction', null, false);
-    return { videoId: video.id, predictionId: prediction };
+    const videoId = await insertVideo(app.db, {
+      user_id: userId,
+      filename: `match-${String(counter)}.mov`,
+      object_key: `proxies/${userId}/export-${String(counter)}.mp4`,
+    });
+    const predictionId = await newSet(videoId, 'prediction', null, false);
+    return { videoId, predictionId };
   }
 
   async function newSet(

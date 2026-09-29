@@ -120,7 +120,9 @@ export const adminRoutes: FastifyPluginCallbackTypebox<{ adminToken: string }> =
           .selectFrom('videos')
           .selectAll()
           .where('id', '=', final.video_id)
-          .executeTakeFirstOrThrow();
+          .executeTakeFirst();
+        // Deleted since its page was read; failing here would cut off the rest of an otherwise valid export.
+        if (video === undefined) continue;
         yield `${JSON.stringify({
           video: toVideo(video, undefined),
           proxyUrl: await app.storage.presignExportDownload(video.object_key),

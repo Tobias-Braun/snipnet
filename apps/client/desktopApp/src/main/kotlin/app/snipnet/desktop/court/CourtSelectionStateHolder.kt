@@ -136,14 +136,32 @@ class CourtSelectionStateHolder(
         if (current.saving) return
         update { it.copy(saving = true, saveError = null) }
         scope.launch {
-            projectStore.setCourt(projectId, court)
-            val remoteId = projectStore.get(projectId)?.remoteVideoId
+            // A failing local write (full disk, locked database) must not leave the screen stuck in "saving" or
+            // escape the scope as an uncaught exception on the UI thread.
+            val remoteId =
+                try {
+                    projectStore.setCourt(projectId, court)
+                    projectStore.get(projectId)?.remoteVideoId
+                } catch (e: Exception) {
+                    update {
+                        it.copy(
+                            saving = false,
+                            saveError = "Could not save the court on this computer: ${e.message}",
+                        )
+                    }
+                    return@launch
+                }
             try {
                 if (remoteId != null) uploadCourt(remoteId, court)
                 update { it.copy(saving = false) }
                 onSaved()
             } catch (e: ApiError) {
-                val message = "Saved on this computer, but the server did not accept it: ${e.message}"
+                val message =
+                    if (e is ApiError.Network) {
+                        "Saved on this computer, but the server could not be reached: ${e.message}"
+                    } else {
+                        "Saved on this computer, but the server did not accept it: ${e.message}"
+                    }
                 update { it.copy(saving = false, saveError = message) }
             }
         }

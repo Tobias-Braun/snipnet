@@ -213,6 +213,25 @@ class CourtSelectionStateHolderTest {
         }
 
     @Test
+    fun unreachableServerIsReportedAsSuchAndNotAsARejection() =
+        runTest {
+            val project = store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            uploadError = ApiError.Network(java.io.IOException("connection refused"))
+            val holder = holder(project.id)
+            advanceUntilIdle()
+            holder.setNetPoint(Point(0.5, 0.5))
+            holder.save()
+            advanceUntilIdle()
+
+            val error =
+                holder.state.value.saveError
+                    .orEmpty()
+            assertTrue(error.contains("could not be reached"), error)
+            assertNotNull(store.get(project.id)?.court)
+            assertEquals(0, saved)
+        }
+
+    @Test
     fun saveWithoutANetPointDoesNothing() =
         runTest {
             val project = store.create("/videos/match.mp4")

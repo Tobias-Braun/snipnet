@@ -99,7 +99,8 @@ fun CourtSelectionScreen(
             Slider(
                 value = state.positionMs.toFloat(),
                 onValueChange = { holder.scrubTo(it.toLong(), exact = false) },
-                onValueChangeFinished = { holder.scrubTo(state.positionMs, exact = true) },
+                // Read from the holder: the composed state can lag behind the last onValueChange of the drag.
+                onValueChangeFinished = { holder.scrubTo(holder.state.value.positionMs, exact = true) },
                 valueRange = 0f..maxOf(state.durationMs.toFloat(), SLIDER_STEPS_MS),
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -135,7 +136,6 @@ private fun CourtCanvas(
                 frame?.height?.toDouble() ?: 0.0,
             )
         }
-    val currentState by rememberUpdatedState(state)
     val currentBox by rememberUpdatedState(box)
     val accent = MaterialTheme.colorScheme.primary
     val netColor = SnipnetTheme.editor.playhead
@@ -160,7 +160,11 @@ private fun CourtCanvas(
                             val b = currentBox
                             dragTarget =
                                 if (b.width > 0) {
-                                    hitTest(currentState, b, b.toNormalized(offset.x.toDouble(), offset.y.toDouble()))
+                                    hitTest(
+                                        holder.state.value,
+                                        b,
+                                        b.toNormalized(offset.x.toDouble(), offset.y.toDouble()),
+                                    )
                                 } else {
                                     null
                                 }
@@ -169,7 +173,9 @@ private fun CourtCanvas(
                         onDragCancel = { dragTarget = null },
                     ) { change, dragAmount ->
                         val b = currentBox
-                        val roi = currentState.roi
+                        // Several drag events can arrive before the next recomposition; reading the holder directly
+                        // applies every delta to the latest ROI instead of dropping some on a stale one.
+                        val roi = holder.state.value.roi
                         if (b.width <= 0) return@detectDragGestures
                         val pointer = b.toNormalized(change.position.x.toDouble(), change.position.y.toDouble())
                         when (val target = dragTarget) {

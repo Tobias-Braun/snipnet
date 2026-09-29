@@ -60,7 +60,7 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `GET /v1/jobs/:id` | – | `200 Job` |
 | `GET /v1/videos/:id/segment-sets` | – | `200 { items: SegmentSet[] }` (oldest first) |
 | `GET /v1/segment-sets/:id` | – | `200 SegmentSet` |
-| `POST /v1/videos/:id/segment-sets` | `{ parentSetId, segments, editLog, isFinal }` | `201 SegmentSet` (kind `user`) |
+| `POST /v1/videos/:id/segment-sets` | `{ parentSetId, segments, editLog, isFinal }` | `201 SegmentSet` (kind `user`); `400 validation_error` if `parentSetId` is malformed, unknown, or belongs to another video |
 | `POST /v1/waitlist` | `{ email, source? }` | `202 {}` (idempotent, rate limited per IP) |
 | `GET /v1/admin/training-export?since=<iso>` | – | `200` NDJSON, one line per video with a final user set of a consenting user: `{ video, proxyUrl, prediction: SegmentSet, final: SegmentSet }` |
 

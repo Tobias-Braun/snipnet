@@ -1,8 +1,25 @@
 import type { Selectable } from 'kysely';
 import type { Static } from 'typebox';
 
-import type { JobsTable, VideosTable } from './db/types.js';
-import type { Court } from './schemas.js';
+import type { JobsTable, SegmentSetsTable, VideosTable } from './db/types.js';
+import type { Court, SegmentSet } from './schemas.js';
+
+/** Builds the API's `SegmentSet` from its row. Segments, scores and the edit log were validated on the way in. */
+export function toSegmentSet(row: Selectable<SegmentSetsTable>) {
+  return {
+    id: row.id,
+    videoId: row.video_id,
+    kind: row.kind,
+    parentSetId: row.parent_set_id,
+    jobId: row.job_id,
+    modelVersion: row.model_version,
+    segments: row.segments as Static<typeof SegmentSet>['segments'],
+    scores: row.scores as Static<typeof SegmentSet>['scores'],
+    editLog: row.edit_log as Static<typeof SegmentSet>['editLog'],
+    isFinal: row.is_final,
+    createdAt: row.created_at.toISOString(),
+  };
+}
 
 export function toJob(row: Selectable<JobsTable>) {
   return {

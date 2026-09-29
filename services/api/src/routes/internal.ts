@@ -6,6 +6,7 @@ import type { Database, JobsTable, VideosTable } from '../db/types.js';
 import { AppError } from '../errors.js';
 import { requireInternalToken } from '../plugins/internal-auth.js';
 import { Court, Job, Video } from '../schemas.js';
+import { assertValidSegments, SegmentInput, serializeSegments } from '../segments.js';
 import { toJob, toVideo } from '../serialize.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,19 +27,7 @@ const Unit = Type.Number({ minimum: 0, maximum: 1 });
 const ResultBody = Type.Object(
   {
     modelVersion: Type.String({ minLength: 1, maxLength: 200 }),
-    segments: Type.Array(
-      Type.Object(
-        {
-          startMs: Type.Integer({ minimum: 0 }),
-          endMs: Type.Integer({ minimum: 1 }),
-          label: Type.Literal('rally'),
-          // Null comes first on purpose: Fastify's Ajv coerces types, and with the number branch first it would
-          // turn a `null` confidence into 0.
-          confidence: Type.Optional(Type.Union([Type.Null(), Unit])),
-        },
-        { additionalProperties: false },
-      ),
-    ),
+    segments: Type.Array(SegmentInput),
     scores: Type.Union([
       Type.Object(
         { hz: Type.Number({ exclusiveMinimum: 0 }), values: Type.Array(Unit) },
@@ -51,39 +40,6 @@ const ResultBody = Type.Object(
 );
 
 type Tx = Transaction<Database>;
-
-interface ResultSegment {
-  startMs: number;
-  endMs: number;
-  confidence?: number | null | undefined;
-}
-
-/**
- * Enforces the segment invariants of docs/api.md: each segment is non-empty and inside the video, and the list
- * is sorted by start with no overlaps (touching segments are allowed).
- */
-function assertValidSegments(segments: ResultSegment[], durationMs: number): void {
-  let previousEnd = 0;
-  for (const [index, segment] of segments.entries()) {
-    const at = `segments[${String(index)}]`;
-    if (segment.startMs >= segment.endMs) {
-      throw new AppError('validation_error', `${at}: startMs must be smaller than endMs`);
-    }
-    if (segment.endMs > durationMs) {
-      throw new AppError(
-        'validation_error',
-        `${at}: endMs exceeds the video duration of ${String(durationMs)} ms`,
-      );
-    }
-    if (segment.startMs < previousEnd) {
-      throw new AppError(
-        'validation_error',
-        `${at}: segments must be sorted by startMs and must not overlap`,
-      );
-    }
-    previousEnd = segment.endMs;
-  }
-}
 
 /** Worker endpoints under `/internal/jobs/*`, guarded by `INTERNAL_TOKEN` instead of a user token. */
 export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: string }> = (
@@ -276,14 +232,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
             kind: 'prediction',
             job_id: job.id,
             model_version: modelVersion,
-            segments: JSON.stringify(
-              segments.map((s) => ({
-                startMs: s.startMs,
-                endMs: s.endMs,
-                label: 'rally',
-                confidence: s.confidence ?? null,
-              })),
-            ),
+            segments: serializeSegments(segments),
             scores: scores === null ? null : JSON.stringify(scores),
           })
           .execute();

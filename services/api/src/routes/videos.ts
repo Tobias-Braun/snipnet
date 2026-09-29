@@ -203,16 +203,41 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
         tags: ['videos'],
         security,
         params: VideoParams,
-        response: { 204: Type.Null(), 401: errors[401], 404: errors[404] },
+        response: { 204: Type.Null(), 401: errors[401], 404: errors[404], 409: Type.Ref('ErrorResponse') },
       },
     },
     async (request, reply) => {
-      const video = await findOwnedVideo(request.user.sub, request.params.id);
-      // The object goes first: if removing it fails the row stays and the client can retry, whereas the other
-      // order would leave an object behind that nothing references anymore. Deleting a missing key succeeds.
-      await app.storage.deleteObject(video.object_key);
-      // Jobs and segment sets follow through their ON DELETE CASCADE foreign keys.
-      await app.db.deleteFrom('videos').where('id', '=', video.id).execute();
+      const id = parseVideoId(request.params.id);
+      await app.db.transaction().execute(async (trx) => {
+        // The row lock serializes this against a concurrent analyze of the same video, so no job can be
+        // enqueued between the check below and the delete.
+        const video = await trx
+          .selectFrom('videos')
+          .selectAll()
+          .where('id', '=', id)
+          .where('user_id', '=', request.user.sub)
+          .forUpdate()
+          .executeTakeFirst();
+        if (video === undefined) throw new AppError('not_found', 'Video not found');
+
+        // A worker may be downloading the proxy or about to post its result; deleting now would pull the data
+        // out from under it. The client retries once the job has finished or failed.
+        const active = await trx
+          .selectFrom('jobs')
+          .select('id')
+          .where('video_id', '=', video.id)
+          .where('status', 'in', ['queued', 'running'])
+          .executeTakeFirst();
+        if (active !== undefined) {
+          throw new AppError('conflict', 'The video is being analyzed and cannot be deleted right now');
+        }
+
+        // The object goes first: if removing it fails the row stays and the client can retry, whereas the other
+        // order would leave an object behind that nothing references anymore. Deleting a missing key succeeds.
+        await app.storage.deleteObject(video.object_key);
+        // Jobs and segment sets follow through their ON DELETE CASCADE foreign keys.
+        await trx.deleteFrom('videos').where('id', '=', video.id).execute();
+      });
       return reply.code(204).send(null);
     },
   );

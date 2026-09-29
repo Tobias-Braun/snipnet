@@ -53,7 +53,7 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `POST /v1/videos` | `{ filename, durationMs, width, height, fps, proxySizeBytes }` | `201 { video, upload: { url, method: "PUT", headers: {…}, expiresAt } }` |
 | `GET /v1/videos` | – | `200 { items: Video[] }` (own videos, newest first) |
 | `GET /v1/videos/:id` | – | `200 Video` |
-| `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows) |
+| `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows); `409` while a job is `queued`/`running` |
 | `POST /v1/videos/:id/upload-complete` | – | `200 Video` (status `uploaded`); `409` if object missing or size mismatch |
 | `PUT /v1/videos/:id/court` | `Court` | `200 Video` |
 | `POST /v1/videos/:id/analyze` | `{}` | `202 Job`; `409` if not uploaded, court missing, or a job is queued/running |
@@ -105,6 +105,11 @@ The client sends the file as the request body with exactly the returned `headers
 a `Content-Length` equal to `proxySizeBytes`; the storage rejects anything else with `403`. Afterwards
 `POST /v1/videos/:id/upload-complete` verifies the object and its size (`409` otherwise) and is idempotent.
 A malformed video id is treated like an unknown one (`404`).
+
+`DELETE /v1/videos/:id` is refused with `409` while the video has a `queued` or `running` job, so a worker never
+loses its video mid-analysis; there is no cancel, the client retries once the job has succeeded or failed. The
+check runs under the video's row lock, so it cannot race with `analyze`. Should a job vanish anyway, the
+`/internal/jobs/:id/*` endpoints answer `404` and the worker drops it.
 
 ## Proxy format
 

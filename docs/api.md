@@ -72,6 +72,14 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `POST /internal/jobs/:id/result` | `{ modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
 | `POST /internal/jobs/:id/fail` | `{ error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
 
+## Proxy upload
+
+`POST /v1/videos` returns a presigned `PUT` URL (valid 1 hour) for the object `proxies/<userId>/<videoId>.mp4`.
+The client sends the file as the request body with exactly the returned `headers` (`Content-Type: video/mp4`) and
+a `Content-Length` equal to `proxySizeBytes`; the storage rejects anything else with `403`. Afterwards
+`POST /v1/videos/:id/upload-complete` verifies the object and its size (`409` otherwise) and is idempotent.
+A malformed video id is treated like an unknown one (`404`).
+
 ## Proxy format
 
 MP4 (H.264, yuv420p), longest side ≤ 854 px (480p), 15 fps constant, mono AAC 16 kHz 64 kbps, `+faststart`.

@@ -12,12 +12,24 @@ export interface DatabaseConfig {
   schema: string | undefined;
 }
 
+export interface S3Config {
+  /** Endpoint the API itself uses for HEAD and DELETE requests (inside Docker: `http://minio:9000`). */
+  endpoint: string;
+  /** Endpoint embedded in presigned URLs; must be reachable from the desktop app, not just from the API. */
+  publicEndpoint: string;
+  region: string;
+  bucket: string;
+  accessKey: string;
+  secretKey: string;
+}
+
 export interface AppConfig {
   host: string;
   port: number;
   logLevel: string;
   version: string;
   database: DatabaseConfig;
+  s3: S3Config;
   /** Secrets for the auth, worker and admin endpoints that later issues implement. */
   secrets: { jwt: string; internalToken: string; adminToken: string };
   /** Origins of the landing page that may call the public endpoints cross-origin; empty disables CORS. */
@@ -63,6 +75,12 @@ const envSchema = z.object({
     .string()
     .regex(/^[a-z_][a-z0-9_]*$/, 'must be a lowercase SQL identifier')
     .optional(),
+  S3_ENDPOINT: z.url(),
+  S3_PUBLIC_ENDPOINT: z.url().optional(),
+  S3_REGION: z.string().default('us-east-1'),
+  S3_BUCKET: z.string().min(3),
+  S3_ACCESS_KEY: z.string(),
+  S3_SECRET_KEY: z.string(),
   JWT_SECRET: secret,
   INTERNAL_TOKEN: secret,
   ADMIN_TOKEN: secret,
@@ -110,6 +128,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       password: values.PGPASSWORD,
       database: values.PGDATABASE,
       schema: values.PGSCHEMA,
+    },
+    s3: {
+      endpoint: values.S3_ENDPOINT,
+      publicEndpoint: values.S3_PUBLIC_ENDPOINT ?? values.S3_ENDPOINT,
+      region: values.S3_REGION,
+      bucket: values.S3_BUCKET,
+      accessKey: values.S3_ACCESS_KEY,
+      secretKey: values.S3_SECRET_KEY,
     },
     secrets: { jwt: values.JWT_SECRET, internalToken: values.INTERNAL_TOKEN, adminToken: values.ADMIN_TOKEN },
     webOrigins: (values.WEB_ORIGIN ?? '')

@@ -10,8 +10,9 @@ RUN pnpm install --frozen-lockfile --filter @snipnet/web...
 COPY apps/web apps/web
 RUN pnpm --filter @snipnet/web run build
 
-FROM nginx:1.27-alpine
+# The unprivileged variant runs nginx as a non-root user, which is why it listens on 8080 instead of 80.
+FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
-EXPOSE 80
-HEALTHCHECK --interval=10s --timeout=3s --retries=5 CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+EXPOSE 8080
+HEALTHCHECK --interval=10s --timeout=3s --retries=5 CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1

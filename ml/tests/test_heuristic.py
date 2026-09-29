@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -252,3 +253,58 @@ def test_predict_cli_prints_segments_and_metrics(clips, tmp_path: Path, capsys: 
     assert "heuristic-v0.1" in output
     assert " s - " in output
     assert "segment F1" in output
+
+
+def offset_proxy(video: Path, target: Path) -> Path:
+    """Remux `video` into Matroska starting at 3.7 s, so the declared duration is the absolute end time."""
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-c", "copy", "-output_ts_offset", "3.7", str(target)],
+        check=True,
+    )
+    return target
+
+
+@needs_ffmpeg
+def test_model_clamps_segments_to_the_real_length_of_an_offset_proxy(
+    clips, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video, labels = clips[2]
+    shifted = offset_proxy(video, tmp_path / "shifted.mkv")
+    seen: list[int] = []
+
+    def recording_predict_from_features(table, duration_ms: int, params):
+        seen.append(duration_ms)
+        return predict_from_features(table, duration_ms, params)
+
+    monkeypatch.setattr("snipnet_ml.heuristic.predict_from_features", recording_predict_from_features)
+
+    prediction = HeuristicModel().predict(shifted, model_court(labels), lambda _: None)
+
+    # Segment ends are clamped to this value, so it must be the real length, not the declared 63.7 s.
+    assert seen == [pytest.approx(labels.duration_ms, abs=300)]
+    assert all(segment.end_ms <= seen[0] for segment in prediction.segments)
+
+
+@needs_ffmpeg
+def test_predict_cli_evaluates_against_the_real_length_of_an_offset_proxy(
+    clips, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video, labels = clips[2]
+    shifted = offset_proxy(video, tmp_path / "shifted.mkv")
+    # A label file that under-reports the length makes the probed duration the one that counts.
+    short_labels = labels.model_copy(update={"duration_ms": 1000, "rallies": []})
+    labels_path = tmp_path / "labels.json"
+    save_labels(short_labels, labels_path)
+    seen: list[int] = []
+
+    def fake_evaluate(_segments, _rallies, duration_ms: int):
+        seen.append(duration_ms)
+        return []
+
+    monkeypatch.setattr("snipnet_ml.predict.evaluate", fake_evaluate)
+    monkeypatch.setattr("snipnet_ml.predict.format_table", lambda _: "")
+
+    predict_main([str(shifted), "--eval", str(labels_path)])
+
+    # The container declares the absolute end (real length + 3.7 s); the evaluation must use the real length.
+    assert seen == [pytest.approx(labels.duration_ms, abs=300)]

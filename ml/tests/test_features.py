@@ -191,6 +191,17 @@ def test_offset_stream_start_keeps_rally_windows_aligned(synthetic, tmp_path) ->
 
 
 @needs_ffmpeg
+def test_video_duration_ignores_the_timestamp_offset_of_the_container(synthetic, tmp_path) -> None:
+    video, _ = synthetic
+    shifted = tmp_path / "shifted.mkv"
+    _ffmpeg("-i", str(video), "-c", "copy", "-output_ts_offset", "3.7", str(shifted))
+    # The container declares the absolute end (about 48.7 s); the real video is 45 s long.
+    assert features.probe_duration(shifted) > 48
+    assert features.video_duration(shifted) == pytest.approx(45.0, abs=0.3)
+    assert features.video_duration(video) == pytest.approx(45.0, abs=0.3)
+
+
+@needs_ffmpeg
 def test_audio_starting_after_video_is_padded_to_the_video_origin(synthetic, tmp_path) -> None:
     video, _ = synthetic
     delayed = tmp_path / "delayed.mkv"

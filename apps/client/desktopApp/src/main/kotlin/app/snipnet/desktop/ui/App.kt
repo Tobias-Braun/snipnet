@@ -41,7 +41,7 @@ fun App(container: AppContainer) {
             when (val screen = stack.last()) {
                 Screen.Login -> LoginScreen(container)
                 Screen.Projects -> ProjectsScreen(container)
-                is Screen.CourtSelection -> CourtSelectionScreen(navigator, screen.videoId)
+                is Screen.CourtSelection -> CourtSelectionScreen(container, screen.videoId)
                 is Screen.Editor -> EditorScreen(navigator, screen.videoId)
             }
         }

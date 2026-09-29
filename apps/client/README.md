@@ -24,6 +24,7 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 | `window` | Window geometry persistence (`window.json` in the data directory). |
 | `auth` | `Session` (login, register, restore, logout), `TokenStore` (`token` file, mode 600) and `AuthStateHolder`. |
 | `video` | `VideoEngine` (probe, open a player, thumbnails, waveform) on FFmpeg through JavaCV, and `ffmpegPath()` for the bundled `ffmpeg` executable. See `docs/adr/0001-video-engine.md`. |
+| `court` | Court and net selection: `FrameBox` (letterbox-aware pixel/normalized conversion), `CourtGeometry` (default ROI, move, resize) and `CourtSelectionStateHolder` (local save plus `PUT /v1/videos/:id/court`). |
 | `ui` | Composables. Screens are placeholders until their features land. |
 
 The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set. Local projects live in `snipnet.db` there.

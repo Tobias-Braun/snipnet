@@ -5,6 +5,8 @@ import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SegmentSet
 import app.snipnet.shared.model.SegmentSetKind
 import app.snipnet.shared.store.PendingSave
+import app.snipnet.shared.store.ProjectStore
+import app.snipnet.shared.store.openInMemoryDatabase
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.SerializationException
 import kotlin.test.Test
@@ -18,7 +20,9 @@ import kotlin.test.assertTrue
  * a duplicate user set.
  */
 class SaveQueueMalformedResponseTest {
-    private val store = newStore()
+    private var signedIn: String? = "u1"
+    private val store =
+        ProjectStore(openInMemoryDatabase(), newId = { "p1" }, now = { 1L }, currentUserId = { signedIn })
     private val save = PendingSave("set-1", listOf(Segment(0, 10_000)), emptyList(), isFinal = false)
     private val stored =
         SegmentSet(
@@ -40,6 +44,9 @@ class SaveQueueMalformedResponseTest {
     private var serverSets: List<SegmentSet> = emptyList()
     private var status = 201
 
+    /** Who is signed in once the upload returns, to simulate a logout and login while the request was in flight. */
+    private var signedInAfterUpload: String? = "u1"
+
     private val queue =
         SaveQueue(
             store,
@@ -50,6 +57,7 @@ class SaveQueueMalformedResponseTest {
             },
             upload = { _, _ ->
                 uploads++
+                signedIn = signedInAfterUpload
                 throw ApiError.MalformedResponse(status, SerializationException("bad body"))
             },
         )
@@ -144,5 +152,25 @@ class SaveQueueMalformedResponseTest {
 
             assertTrue(queue.flush("p1") is FlushResult.Rejected)
             assertEquals(0, lookups)
+        }
+
+    @Test
+    fun anAccountChangeDuringTheUploadLeavesTheCheckToTheOwner() =
+        runTest {
+            queueSave()
+            serverSets = listOf(stored)
+            signedInAfterUpload = "u2"
+
+            assertEquals(FlushResult.Idle, queue.flush("p1"))
+            assertEquals(0, lookups)
+            assertNotNull(store.get("p1")?.pendingSave)
+
+            // Back as the owner, the save is confirmed from the server's sets instead of being posted again.
+            signedIn = "u1"
+            val result = queue.flush("p1")
+
+            assertTrue(result is FlushResult.Saved)
+            assertEquals("stored-1", result.set.id)
+            assertEquals(1, uploads)
         }
 }

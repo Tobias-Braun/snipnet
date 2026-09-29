@@ -147,6 +147,9 @@ class SaveQueue(
         } catch (e: ApiError.MalformedResponse) {
             if (e.status !in 200..299) throw e
             unconfirmed[projectId] = parentSetId
+            // The upload suspended, so the account may have changed; the lookup would carry the new account's token.
+            // The project stays unconfirmed, so its owner's next flush does the check instead.
+            if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()
             return findStoredCopy(remoteId, save, parentSetId) ?: throw e
         }
     }

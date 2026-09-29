@@ -95,7 +95,12 @@ class AppContainer(
     }
 
     val session =
-        Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = { pipeline.reset() })
+        Session(
+            api,
+            TokenStore(dataDir.resolve("token")),
+            onLoggedOut = { pipeline.reset() },
+            onSessionExpired = { navigator.resetTo(Screen.Login) },
+        )
 
     /** Backs the projects screen; the caller closes it when the screen leaves the composition. */
     fun projectsStateHolder() = ProjectsStateHolder(pipeline)

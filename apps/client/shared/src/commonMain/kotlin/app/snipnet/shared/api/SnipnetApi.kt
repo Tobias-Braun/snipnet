@@ -50,6 +50,11 @@ import kotlinx.serialization.serializer
  * waitlist, which the contract leaves open. It is a plain property so the session layer can set it after login and
  * clear it on logout without rebuilding the client.
  *
+ * Expiry: when an authenticated call is answered with 401 while a token was sent, [onUnauthorized] runs before the
+ * [ApiError.Unauthorized] is thrown, so the session layer can sign the user out in one central place instead of
+ * every screen handling it. Calls without user authentication (login, register, waitlist, admin export) never
+ * trigger it, since a 401 there means wrong credentials rather than an expired session.
+ *
  * @param baseUrl server root without a trailing slash requirement, for example `http://localhost:3000`.
  * @param engine HTTP engine; tests pass a Ktor `MockEngine`.
  */
@@ -59,6 +64,10 @@ class SnipnetApi(
     @kotlin.concurrent.Volatile var token: String? = null,
 ) : AutoCloseable {
     private val baseUrl = baseUrl.trimEnd('/')
+
+    /** Called when the server rejects the current [token] with 401; see the class documentation. */
+    @kotlin.concurrent.Volatile
+    var onUnauthorized: (() -> Unit)? = null
 
     private val client =
         HttpClient(engine) {
@@ -217,11 +226,13 @@ class SnipnetApi(
         auth: Auth,
         configure: HttpRequestBuilder.() -> Unit = {},
     ): HttpResponse {
+        // Captured once so the 401 check below refers to the token that was actually sent.
+        val sentToken = if (auth == Auth.USER) token else null
         val response =
             try {
                 client.request(baseUrl + path) {
                     this.method = method
-                    if (auth == Auth.USER) token?.let { bearerAuth(it) }
+                    sentToken?.let { bearerAuth(it) }
                     if (body != null) {
                         contentType(ContentType.Application.Json)
                         setBody(body)
@@ -233,7 +244,12 @@ class SnipnetApi(
             } catch (e: Throwable) {
                 throw ApiError.Network(e)
             }
-        if (!response.status.isSuccess()) throw toApiError(response)
+        if (!response.status.isSuccess()) {
+            val error = toApiError(response)
+            // A late 401 for a token that was already replaced (logout, new login) must not end the newer session.
+            if (error is ApiError.Unauthorized && sentToken != null && sentToken == token) onUnauthorized?.invoke()
+            throw error
+        }
         return response
     }
 

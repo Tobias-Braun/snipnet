@@ -442,4 +442,39 @@ class SnipnetApiTest {
             ).health()
             assertEquals("http://localhost:3000/v1/health", rec.last.url.toString())
         }
+
+    private val unauthorizedBody = """{"error":{"code":"unauthorized","message":"token expired"}}"""
+
+    @Test
+    fun unauthorizedOnAnAuthenticatedCallNotifiesTheHookAndStillThrows() =
+        runTest {
+            var notified = 0
+            val api = api { respond(unauthorizedBody, HttpStatusCode.Unauthorized, jsonHeaders) }
+            api.onUnauthorized = { notified++ }
+            assertFailsWith<ApiError.Unauthorized> { api.listVideos() }
+            assertEquals(1, notified)
+        }
+
+    @Test
+    fun unauthorizedWithoutUserAuthenticationDoesNotNotifyTheHook() =
+        runTest {
+            var notified = 0
+            val api = api { respond(unauthorizedBody, HttpStatusCode.Unauthorized, jsonHeaders) }
+            api.onUnauthorized = { notified++ }
+            assertFailsWith<ApiError.Unauthorized> { api.login("a@b.de", "wrong-password") }
+            assertFailsWith<ApiError.Unauthorized> { api.trainingExport("admin") }
+            api.token = null
+            assertFailsWith<ApiError.Unauthorized> { api.me() }
+            assertEquals(0, notified)
+        }
+
+    @Test
+    fun otherErrorStatusesDoNotNotifyTheHook() =
+        runTest {
+            var notified = 0
+            val api = api { respond(unauthorizedBody, HttpStatusCode.Forbidden, jsonHeaders) }
+            api.onUnauthorized = { notified++ }
+            assertFailsWith<ApiError.Forbidden> { api.listVideos() }
+            assertEquals(0, notified)
+        }
 }

@@ -34,6 +34,7 @@ fun LoginScreen(container: AppContainer) {
     val holder = remember { container.authStateHolder() }
     DisposableEffect(holder) { onDispose { holder.close() } }
     val state by holder.state.collectAsState()
+    val notice by container.session.notice.collectAsState()
     val registering = state.mode == AuthMode.REGISTER
 
     Column(
@@ -49,6 +50,7 @@ fun LoginScreen(container: AppContainer) {
                 if (registering) "Create account" else "Sign in",
                 style = MaterialTheme.typography.headlineMedium,
             )
+            notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
             OutlinedTextField(
                 value = state.email,
                 onValueChange = holder::setEmail,

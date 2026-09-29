@@ -4,6 +4,7 @@ import app.snipnet.desktop.auth.AuthStateHolder
 import app.snipnet.desktop.auth.Session
 import app.snipnet.desktop.auth.TokenStore
 import app.snipnet.desktop.court.CourtSelectionStateHolder
+import app.snipnet.desktop.editor.EditorStateHolder
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
 import app.snipnet.desktop.projects.ImportPipeline
@@ -14,6 +15,7 @@ import app.snipnet.desktop.video.JavaCvVideoEngine
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
 import app.snipnet.shared.api.SnipnetApi
+import app.snipnet.shared.model.SegmentSetKind
 import app.snipnet.shared.store.ProjectStore
 import app.snipnet.shared.store.openDatabase
 import io.ktor.client.engine.HttpClientEngine
@@ -92,6 +94,20 @@ class AppContainer(
         onSaved = onSaved,
         loadSuggestion = { remoteVideoId -> api.getVideo(remoteVideoId).courtSuggestion },
     )
+
+    /**
+     * Backs the editor of the local project [projectId]; the caller closes it when the screen is left. The newest
+     * prediction of the video (segments and score curve) is loaded from the API when the project has been uploaded.
+     */
+    fun editorStateHolder(projectId: String) =
+        EditorStateHolder(
+            projectId,
+            projectStore,
+            videoEngine,
+            loadPrediction = { remoteVideoId ->
+                api.listSegmentSets(remoteVideoId).lastOrNull { it.kind == SegmentSetKind.PREDICTION }
+            },
+        )
 
     /** Ends the session and returns to the login screen with an empty back stack. */
     fun logout() {

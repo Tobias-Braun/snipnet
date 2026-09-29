@@ -33,7 +33,7 @@ data class FrameRate(
     }
 
     /** Whether drop-frame timecode is defined for this rate: only the NTSC 29.97 and 59.94 fps variants. */
-    val supportsDropFrame: Boolean get() = denominator == 1001 && nominal % 30 == 0
+    val supportsDropFrame: Boolean get() = denominator == 1001 && (nominal == 30 || nominal == 60)
 
     /**
      * Drop-frame `HH:MM:SS;FF` timecode of [frames], the inverse of [framesOf] for `;` timecodes. Drop frame skips

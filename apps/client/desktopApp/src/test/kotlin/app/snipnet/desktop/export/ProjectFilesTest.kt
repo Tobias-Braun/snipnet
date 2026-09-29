@@ -92,6 +92,9 @@ class ProjectFilesTest {
     fun aSemicolonTimecodeAtANonNtscRateIsNotDropFrame() {
         val pal = info.copy(startTimecode = "01:00:00;00")
         assertTrue("FCM: NON-DROP FRAME" in ProjectFiles.edl("m", "m.mp4", pal, ranges))
+        // FCPXML defines DF only for 29.97 and 59.94 fps, so 119.88 fps high-frame-rate footage stays NDF.
+        val hfr = info.copy(frameRate = 120000.0 / 1001, startTimecode = "01:00:00;00")
+        assertTrue("tcFormat=\"NDF\"" in ProjectFiles.fcpxml("m", "file:///m.mp4", hfr, ranges))
     }
 
     @Test

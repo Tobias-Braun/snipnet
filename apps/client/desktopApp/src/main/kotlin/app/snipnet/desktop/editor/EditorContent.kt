@@ -38,6 +38,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.snipnet.desktop.export.exportRanges
 import app.snipnet.desktop.theme.SnipnetTheme
 import app.snipnet.shared.editing.EditSegment
 
@@ -108,6 +109,8 @@ private fun ColumnScope.LoadedEditor(
         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp))
     }
     TimelineView(state, holder)
+    val exportable = state.timeline?.exportRanges(state.export.options.includeRejected)?.size ?: 0
+    ExportDialog(state.export, exportable, holder)
 }
 
 @Composable
@@ -165,6 +168,10 @@ private fun TransportBar(
         CommandButton("Delete", EditorCommand.Delete, holder)
         CommandButton("Undo", EditorCommand.Undo, holder, enabled = state.canUndo)
         CommandButton("Redo", EditorCommand.Redo, holder, enabled = state.canRedo)
+        OutlinedButton(
+            onClick = holder::openExport,
+            modifier = Modifier.keepEditorFocus().testTag("export-button"),
+        ) { Text("Export") }
     }
 }
 

@@ -1,6 +1,11 @@
 package app.snipnet.desktop.editor
 
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import app.snipnet.desktop.export.ExportOptions
+import app.snipnet.desktop.export.ExportRequest
+import app.snipnet.desktop.export.FfmpegRallyExporter
+import app.snipnet.desktop.export.RallyExporter
+import app.snipnet.desktop.export.exportRanges
 import app.snipnet.desktop.state.StateHolder
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.video.VideoPlayer
@@ -23,8 +28,10 @@ import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SegmentSet
 import app.snipnet.shared.store.Project
 import app.snipnet.shared.store.ProjectStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image
@@ -52,8 +59,13 @@ class EditorStateHolder(
     private val loadPrediction: suspend (remoteVideoId: String) -> SegmentSet? = { null },
     private val now: () -> Long = System::currentTimeMillis,
     dispatcher: CoroutineDispatcher = Dispatchers.Main,
+    private val exporter: RallyExporter = FfmpegRallyExporter(),
 ) : StateHolder<EditorState>(EditorState(), dispatcher) {
     private var player: VideoPlayer? = null
+
+    /** The original video file, which the export cuts; unlike the playback source it is never the proxy. */
+    private var originalPath: Path? = null
+    private var exportJob: Job? = null
     private var closed = false
 
     /** Identity of the trim drag in progress; edits with the same key collapse into one undo step. */
@@ -70,6 +82,7 @@ class EditorStateHolder(
             update { it.copy(loading = false, loadError = "This project no longer exists.") }
             return
         }
+        originalPath = Path.of(project.originalPath)
         try {
             val opened = engine.open(playbackSource(project))
             if (closed) {
@@ -454,6 +467,78 @@ class EditorStateHolder(
 
     /** Scrolls so that the playhead is inside the view, placing it a little in from the left edge when it was not. */
     private fun revealPlayhead() = followPlayhead()
+
+    /** Opens the export dialog with a clean result, defaulting the target folder to the one of the original video. */
+    fun openExport() =
+        update { s ->
+            val folder = s.export.options.folder ?: originalPath?.toAbsolutePath()?.parent
+            s.copy(
+                export =
+                    s.export.copy(
+                        open = true,
+                        options = s.export.options.copy(folder = folder),
+                        result = null,
+                        error = null,
+                        progress = 0.0,
+                    ),
+            )
+        }
+
+    /** Changes the dialog choices; ignored while an export runs. */
+    fun setExportOptions(transform: (ExportOptions) -> ExportOptions) =
+        update { s ->
+            if (s.export.running) s else s.copy(export = s.export.copy(options = transform(s.export.options)))
+        }
+
+    /**
+     * Exports the current segments of the original file with the dialog options. The original is probed again
+     * rather than trusting the playback info, because the editor may be playing the proxy, whose frame rate and
+     * size differ from what the project files must describe.
+     */
+    fun startExport() {
+        val current = state.value
+        val timeline = current.timeline ?: return
+        val original = originalPath ?: return
+        val options = current.export.options
+        val folder = options.folder ?: return
+        if (current.export.running) return
+        update { it.copy(export = it.export.copy(running = true, progress = 0.0, result = null, error = null)) }
+        exportJob =
+            scope.launch {
+                try {
+                    val request =
+                        ExportRequest(
+                            source = original,
+                            info = engine.probe(original),
+                            ranges = timeline.exportRanges(options.includeRejected),
+                            folder = folder,
+                            mode = options.mode,
+                            quality = options.quality,
+                        )
+                    val files = exporter.export(request) { fraction -> update { it.withExportProgress(fraction) } }
+                    update { it.copy(export = it.export.copy(running = false, progress = 1.0, result = files)) }
+                } catch (e: CancellationException) {
+                    update { it.copy(export = it.export.copy(running = false, progress = 0.0)) }
+                    throw e
+                } catch (e: Exception) {
+                    update { it.copy(export = it.export.copy(running = false, error = e.message ?: "Export failed.")) }
+                }
+            }
+    }
+
+    private fun EditorState.withExportProgress(fraction: Double) =
+        if (export.running) copy(export = export.copy(progress = fraction)) else this
+
+    /** Stops the running export; ffmpeg is killed and the partial files are removed. */
+    fun cancelExport() {
+        exportJob?.cancel()
+    }
+
+    /** Closes the dialog; a running export is cancelled first. */
+    fun closeExport() {
+        cancelExport()
+        update { it.copy(export = it.export.copy(open = false)) }
+    }
 
     override fun close() {
         closed = true

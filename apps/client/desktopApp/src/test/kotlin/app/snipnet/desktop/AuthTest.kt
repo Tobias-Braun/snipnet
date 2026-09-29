@@ -4,6 +4,7 @@ import app.snipnet.desktop.auth.AuthMode
 import app.snipnet.desktop.auth.AuthStateHolder
 import app.snipnet.desktop.auth.Session
 import app.snipnet.desktop.auth.TokenStore
+import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.api.SnipnetApi
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -22,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -148,6 +150,57 @@ class SessionAndAuthTest {
         }
 
     @Test
+    fun unauthorizedResponseAfterLoginEndsTheSessionWithANotice() =
+        runTest {
+            var expired = false
+            val tokenStore = TokenStore(Files.createTempDirectory("snipnet-session").resolve("token"))
+            val api =
+                SnipnetApi(
+                    MockEngine { request ->
+                        when (request.url.encodedPath) {
+                            "/v1/auth/login" ->
+                                respond(
+                                    """{"token":"jwt","user":$USER_JSON}""",
+                                    HttpStatusCode.OK,
+                                    json,
+                                )
+                            else ->
+                                respond(
+                                    """{"error":{"code":"unauthorized","message":"expired"}}""",
+                                    HttpStatusCode.Unauthorized,
+                                    json,
+                                )
+                        }
+                    },
+                )
+            val session = Session(api, tokenStore, onSessionExpired = { expired = true })
+            session.login("a@b.de", "password1")
+            assertNull(session.notice.value)
+
+            assertFailsWith<ApiError.Unauthorized> { api.listVideos() }
+
+            assertTrue(expired)
+            assertNull(api.token)
+            assertNull(tokenStore.load())
+            assertNull(session.user.value)
+            assertEquals(Session.SESSION_EXPIRED_MESSAGE, session.notice.value)
+
+            session.login("a@b.de", "password1")
+            assertNull(session.notice.value)
+        }
+
+    @Test
+    fun wrongCredentialsAtLoginDoNotCountAsAnExpiredSession() =
+        runTest {
+            var expired = false
+            val env = env { error(HttpStatusCode.Unauthorized, "unauthorized") }
+            val session = Session(env.api, env.tokenStore, onSessionExpired = { expired = true })
+            assertFailsWith<ApiError.Unauthorized> { session.login("a@b.de", "password1") }
+            assertFalse(expired)
+            assertNull(session.notice.value)
+        }
+
+    @Test
     fun restoreResumesSessionWithStoredToken() =
         runTest {
             val env = env(stored = "old") { HttpStatusCode.OK to USER_JSON }
@@ -165,8 +218,12 @@ class SessionAndAuthTest {
     @Test
     fun restoreDropsARejectedToken() =
         runTest {
+            var expired = false
             val env = env(stored = "expired") { error(HttpStatusCode.Unauthorized, "unauthorized") }
-            assertFalse(env.session.restore())
+            val session = Session(env.api, env.tokenStore, onSessionExpired = { expired = true })
+            assertFalse(session.restore())
+            assertFalse(expired)
+            assertNull(session.notice.value)
             assertNull(env.tokenStore.load())
             assertNull(env.api.token)
         }

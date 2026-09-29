@@ -70,6 +70,14 @@ class VideoEngineTest {
         }
 
     @Test
+    fun probeReadsTheEmbeddedStartTimecode() =
+        runBlocking {
+            assertEquals(null, engine.probe(clip).startTimecode)
+            val stamped = TestClips.withTimecode(clip, tmp.resolve("stamped.mov"), "10:00:00:00")
+            assertEquals("10:00:00:00", engine.probe(stamped).startTimecode)
+        }
+
+    @Test
     fun probeRejectsMissingFiles() {
         assertFailsWith<VideoEngineException> { runBlocking { engine.probe(tmp.resolve("missing.mp4")) } }
     }

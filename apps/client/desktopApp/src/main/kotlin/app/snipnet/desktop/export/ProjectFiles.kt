@@ -22,7 +22,10 @@ object ProjectFiles {
         ranges: List<TimeRange>,
     ): String {
         val rate = FrameRate.fromFps(info.frameRate)
-        val clips = ranges.map { rate.framesAt(it.startMs) to rate.framesAt(it.endMs) - rate.framesAt(it.startMs) }
+        val origin = sourceStartFrames(info, rate)
+        // Clip starts are positions on the source's own timecode, so they include the embedded start timecode.
+        val clips =
+            ranges.map { origin + rate.framesAt(it.startMs) to rate.framesAt(it.endMs) - rate.framesAt(it.startMs) }
         val audio =
             if (info.hasAudio) {
                 " hasAudio=\"1\" audioSources=\"1\" audioChannels=\"${info.audioChannels}\" audioRate=\"${info.audioSampleRate}\""
@@ -41,7 +44,7 @@ object ProjectFiles {
             "    <format id=\"r1\" frameDuration=\"${rate.frameDuration}\" width=\"${info.width}\" height=\"${info.height}\"/>",
         )
         out.appendLine(
-            "    <asset id=\"r2\" name=\"${xml(name)}\" src=\"${xml(sourceUri)}\" start=\"0s\" " +
+            "    <asset id=\"r2\" name=\"${xml(name)}\" src=\"${xml(sourceUri)}\" start=\"${rate.rational(origin)}\" " +
                 "duration=\"$assetDuration\" hasVideo=\"1\" format=\"r1\"$audio/>",
         )
         out.appendLine("  </resources>")
@@ -73,7 +76,8 @@ object ProjectFiles {
 
     /**
      * CMX3600 EDL with one cut event per range on the auxiliary reel `AX`, audio and video together. Source
-     * timecodes are relative to the start of the file, the record side starts at 01:00:00:00 and runs without gaps.
+     * timecodes continue from the timecode embedded in the file (00:00:00:00 when it has none), the record side
+     * starts at 01:00:00:00 and runs without gaps.
      * Timecodes count the nominal frame rate without drop frames.
      */
     fun edl(
@@ -83,13 +87,14 @@ object ProjectFiles {
         ranges: List<TimeRange>,
     ): String {
         val rate = FrameRate.fromFps(info.frameRate)
+        val origin = sourceStartFrames(info, rate)
         val out = StringBuilder()
         out.append("TITLE: ").appendLine(singleLine(name))
         out.appendLine("FCM: NON-DROP FRAME")
         var record = RECORD_START_HOURS * 3600L * rate.nominal
         ranges.forEachIndexed { index, range ->
-            val start = rate.framesAt(range.startMs)
-            val end = rate.framesAt(range.endMs)
+            val start = origin + rate.framesAt(range.startMs)
+            val end = origin + rate.framesAt(range.endMs)
             val recordEnd = record + (end - start)
             out.appendLine()
             out.appendLine(
@@ -106,6 +111,12 @@ object ProjectFiles {
         }
         return out.toString()
     }
+
+    /** Frame index of the file's first frame on its embedded timecode; absent or unparsable timecodes count as 0. */
+    private fun sourceStartFrames(
+        info: VideoInfo,
+        rate: FrameRate,
+    ): Long = info.startTimecode?.let { rate.framesOf(it) } ?: 0L
 
     private fun singleLine(text: String) = text.replace(Regex("[\\r\\n]+"), " ")
 

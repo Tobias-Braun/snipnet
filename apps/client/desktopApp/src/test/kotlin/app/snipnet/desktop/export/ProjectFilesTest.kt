@@ -29,6 +29,38 @@ class ProjectFilesTest {
     }
 
     @Test
+    fun fcpxmlOffsetsAssetAndClipsByTheEmbeddedStartTimecode() {
+        val stamped = info.copy(startTimecode = "10:00:00:00")
+        assertEquals(
+            golden("two-rallies-25fps-tc10h.fcpxml"),
+            ProjectFiles.fcpxml("match", "file:///videos/match.mp4", stamped, ranges),
+        )
+    }
+
+    @Test
+    fun edlSourceTimecodesContinueFromTheEmbeddedStartTimecode() {
+        val stamped = info.copy(startTimecode = "10:00:00:00")
+        assertEquals(golden("two-rallies-25fps-tc10h.edl"), ProjectFiles.edl("match", "match.mp4", stamped, ranges))
+    }
+
+    @Test
+    fun anUnparsableStartTimecodeIsIgnored() {
+        val garbled = info.copy(startTimecode = "not a timecode")
+        assertEquals(golden("two-rallies-25fps.edl"), ProjectFiles.edl("match", "match.mp4", garbled, ranges))
+    }
+
+    @Test
+    fun timecodesParseToFrameIndexes() {
+        assertEquals(90_000L, FrameRate(25, 1).framesOf("01:00:00:00"))
+        assertEquals(null, FrameRate(25, 1).framesOf("00:00:00:25"))
+        assertEquals(null, FrameRate(25, 1).framesOf("garbage"))
+        // One hour of drop-frame timecode is 107892 real frames at 29.97 fps, non-drop counts 108000.
+        assertEquals(107_892L, FrameRate(30000, 1001).framesOf("01:00:00;00"))
+        assertEquals(108_000L, FrameRate(30000, 1001).framesOf("01:00:00:00"))
+        assertEquals(1_800L, FrameRate(30000, 1001).framesOf("00:01:00;02"))
+    }
+
+    @Test
     fun ntscRatesUseExactFractionsInFcpxmlAndNominalTimecodesInEdl() {
         val ntsc = info.copy(frameRate = 30000.0 / 1001)
         val one = listOf(TimeRange(10_000, 20_000))

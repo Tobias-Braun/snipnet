@@ -48,6 +48,19 @@ object TestClips {
         return target
     }
 
+    /**
+     * A stream copy of [source] into a QuickTime file whose tmcd track starts at [timecode], the way cameras store
+     * their start timecode.
+     */
+    fun withTimecode(
+        source: Path,
+        target: Path,
+        timecode: String,
+    ): Path {
+        run("-i", source.toString(), "-c", "copy", "-timecode", timecode, target.toString())
+        return target
+    }
+
     /** A synthetic clip of any size and duration with noise-free content, for the decode benchmark. */
     fun benchmarkClip(
         target: Path,

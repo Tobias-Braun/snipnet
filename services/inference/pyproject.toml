@@ -3,7 +3,7 @@ name = "snipnet-inference"
 version = "0.0.0"
 description = "Snipnet inference worker: claims jobs from the API, runs the model and posts results"
 requires-python = "==3.12.*"
-dependencies = ["snipnet-ml"]
+dependencies = ["snipnet-ml", "httpx>=0.28"]
 
 [tool.uv.sources]
 snipnet-ml = { workspace = true }

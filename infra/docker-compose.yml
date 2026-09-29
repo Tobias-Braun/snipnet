@@ -61,9 +61,8 @@ services:
         mc mb --ignore-existing "minio/$$S3_BUCKET"
     restart: 'no'
 
-  # The API and worker join the stack once their images exist (see the services/api and services/inference
-  # issues). Their configuration is already documented in infra/.env.example; inside the Compose network
-  # they reach Postgres at postgres:5432 and MinIO at http://minio:9000 instead of localhost.
+  # The API joins the stack once its image exists (see the services/api issue). Its configuration is already
+  # documented in infra/.env.example; inside the Compose network the API and worker reach Postgres at postgres:5432 and MinIO at http://minio:9000 instead of localhost.
   #
   # api:
   #   build: ../services/api
@@ -80,16 +79,20 @@ services:
   #     S3_ENDPOINT: http://minio:9000
   #   ports:
   #     - '127.0.0.1:${API_PORT:-3000}:3000'
-  #
-  # worker:
-  #   build:
-  #     context: ..
-  #     dockerfile: services/inference/Dockerfile
-  #   depends_on:
-  #     - api
-  #   env_file: .env
-  #   environment:
-  #     API_URL: http://api:3000
+
+  # The worker has no depends_on on the API: it treats connection errors as an empty queue and keeps polling,
+  # so it can start before the API service above is enabled or ready.
+  worker:
+    build:
+      context: ..
+      dockerfile: services/inference/Dockerfile
+    env_file: .env
+    environment:
+      API_URL: http://api:3000
+    restart: unless-stopped
+    # On SIGTERM the worker finishes its current job first; Compose's default of 10 s would SIGKILL it mid-job
+    # and leave the job to the 10 minute lease timeout.
+    stop_grace_period: 10m
 
 volumes:
   postgres-data:

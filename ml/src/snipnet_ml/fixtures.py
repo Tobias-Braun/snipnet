@@ -67,13 +67,14 @@ def _click_expression(rallies: list[Rally]) -> str:
     return "+".join(terms) or "0"
 
 
-def _distractor_columns(court: Court) -> list[float]:
-    """Left x positions of the two edge distractors, both outside the court ROI.
+def _distractor_columns(court: Court) -> list[int]:
+    """Left x pixel positions of the two edge distractors, both outside the court ROI.
 
     Each side margin (left of and right of the ROI) that is wide enough for a distractor plus clearance is used.
     With both margins available one distractor goes to each; with only one, both share it at different x
     positions. Raises ValueError for a court that leaves no usable margin, since the fixture could then not
-    keep motion outside the rallies away from the ROI.
+    keep motion outside the rallies away from the ROI. The positions are whole pixels, exactly as they are passed
+    to the overlay filter, so that a check on them covers what is actually rendered.
     """
     roi = court.roi
     right_start = (roi.x + roi.width) * WIDTH
@@ -88,8 +89,8 @@ def _distractor_columns(court: Court) -> list[float]:
     first_start, first_width = margins[0]
     last_start, last_width = margins[-1]
     return [
-        first_start + 0.1 * (first_width - _DISTRACTOR_SIZE),
-        last_start + 0.72 * (last_width - _DISTRACTOR_SIZE),
+        round(first_start + 0.1 * (first_width - _DISTRACTOR_SIZE)),
+        round(last_start + 0.72 * (last_width - _DISTRACTOR_SIZE)),
     ]
 
 
@@ -114,7 +115,7 @@ def _filter_graph(rallies: list[Rally], court: Court, rng: random.Random) -> str
         phase = rng.uniform(0, 6.28)
         filters.append(f"color=c=0x501818:s={_DISTRACTOR_SIZE}x{_DISTRACTOR_SIZE}:r={FPS}[d{index}]")
         filters.append(
-            f"[{last}][d{index}]overlay=x={side_x:.0f}:"
+            f"[{last}][d{index}]overlay=x={side_x}:"
             f"y='{HEIGHT / 2 - 10:.0f}+{HEIGHT * 0.35:.0f}*sin({speed:.3f}*t+{phase:.3f})':eval=frame[dv{index}]"
         )
         last = f"dv{index}"
@@ -147,6 +148,7 @@ def generate_video(
     """Render the synthetic proxy video to `output` and return the ground-truth labels."""
     if duration_s <= 0:
         raise ValueError("duration_s must be positive")
+    # Rejects a court without room for the distractors before ffmpeg is looked up or anything is rendered.
     _distractor_columns(court)
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is required to generate fixtures but was not found on PATH")

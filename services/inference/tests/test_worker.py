@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from snipnet_inference.settings import Settings
 from snipnet_inference.worker import Worker, parse_court
 from snipnet_ml import Court, InvalidInputError, Prediction, ProgressCallback, ScoreCurve, Segment
+from snipnet_ml.court_detect import CourtSuggestion
 
 API = "http://api.test"
 PROXY_URL = "http://storage.test/proxy.mp4"
@@ -180,10 +181,128 @@ def test_run_survives_api_errors_and_stops_on_request(api: respx.MockRouter) -> 
         return httpx.Response(204)
 
     api.post(f"{API}/internal/jobs/claim").mock(side_effect=claim)
+    api.post(f"{API}/internal/court-detection/claim").respond(204)
 
     worker.run()
 
     assert calls == 3
+
+
+VIDEO_ID = "22222222-2222-4222-8222-222222222222"
+COURT_CLAIM = {"videoId": VIDEO_ID, "proxyUrl": PROXY_URL}
+SUGGESTION_URL = f"{API}/internal/videos/{VIDEO_ID}/court-suggestion"
+COURT = Court.model_validate(
+    {"roi": {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}, "netPoint": {"x": 0.4, "y": 0.5}}
+)
+
+
+def stub_detection(monkeypatch: pytest.MonkeyPatch, result: CourtSuggestion | Exception | None) -> list[bytes]:
+    """Replace the detector; the returned list receives the bytes of the proxy it was called with."""
+    seen: list[bytes] = []
+
+    def detect(path: Path) -> CourtSuggestion | None:
+        seen.append(path.read_bytes())
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr("snipnet_inference.worker.detect_court", detect)
+    return seen
+
+
+def test_court_detection_posts_the_suggestion(api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    post = api.post(SUGGESTION_URL).respond(204)
+    seen = stub_detection(monkeypatch, CourtSuggestion(court=COURT, confidence=0.83))
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    assert seen == [b"video-bytes"]
+    assert json.loads(post.calls[0].request.content) == {
+        "court": {
+            "roi": {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6},
+            "netPoint": {"x": 0.4, "y": 0.5},
+        },
+        "confidence": 0.83,
+    }
+    assert post.calls[0].request.headers["authorization"] == "Bearer tok"
+
+
+def test_court_detection_posts_null_when_no_net_was_found(
+    api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    post = api.post(SUGGESTION_URL).respond(204)
+    fail = api.post(f"{SUGGESTION_URL}/fail").respond(204)
+    stub_detection(monkeypatch, None)
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    assert json.loads(post.calls[0].request.content) is None
+    assert fail.call_count == 0
+
+
+def test_court_detection_invalid_input_is_not_retryable(api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    post = api.post(SUGGESTION_URL).respond(204)
+    fail = api.post(f"{SUGGESTION_URL}/fail").respond(204)
+    stub_detection(monkeypatch, InvalidInputError("cannot read video"))
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    assert post.call_count == 0
+    assert json.loads(fail.calls[0].request.content) == {
+        "workerId": "w1",
+        "error": "cannot read video",
+        "retryable": False,
+    }
+
+
+def test_court_detection_result_rejected_with_409_does_not_post_fail(
+    api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    api.post(SUGGESTION_URL).respond(409, json={"error": {"code": "conflict", "message": "not running"}})
+    fail = api.post(f"{SUGGESTION_URL}/fail").respond(204)
+    stub_detection(monkeypatch, CourtSuggestion(court=COURT, confidence=0.83))
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    assert fail.call_count == 0
+
+
+def test_court_detection_other_errors_are_retryable(api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(500)
+    fail = api.post(f"{SUGGESTION_URL}/fail").respond(204)
+    stub_detection(monkeypatch, None)
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    body = json.loads(fail.calls[0].request.content)
+    assert body["retryable"] is True
+    assert "HTTP 500" in body["error"]
+
+
+def test_empty_detection_queue_claims_nothing(api: respx.MockRouter) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(204)
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is False
+
+
+def test_pending_work_prefers_court_detection_over_jobs(api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    api.post(SUGGESTION_URL).respond(204)
+    job_claim = api.post(f"{API}/internal/jobs/claim").respond(204)
+    stub_detection(monkeypatch, None)
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_pending() is True
+    assert job_claim.call_count == 0
 
 
 def test_result_rejected_with_409_does_not_post_fail(api: respx.MockRouter) -> None:

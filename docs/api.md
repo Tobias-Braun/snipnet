@@ -88,13 +88,21 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 | `POST /internal/jobs/:id/progress` | `{ workerId, progress }` | `204`, extends lease |
 | `POST /internal/jobs/:id/result` | `{ workerId, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
 | `POST /internal/jobs/:id/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
+| `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts. |
+| `POST /internal/videos/:id/court-suggestion` | `CourtSuggestion` or JSON `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running` |
+| `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or is leased to another worker |
 
 `progress`, `result` and `fail` carry the `workerId` that was sent to `claim`. If the job is not `running` or its
 `worker_id` differs (the lease expired and another worker re-claimed the job), the API answers `409` and changes
 nothing. The worker treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on
 `progress` also aborts the model run early.
 
-## Court suggestion (proposal)
+For court detection only the failure report carries the `workerId`: a result from a worker whose lease expired is
+still a valid detection of the same proxy, so it is accepted while the task is `running`, whereas a stale failure
+report must not requeue the attempt of the worker that took the task over. A `409` on the result is treated as
+"lease lost" as well: the worker drops the task without posting `fail`.
+
+## Court suggestion
 
 The court has to be known before `analyze`, so the automatic net detection cannot run inside the analyze job.
 Instead the worker detects the net once the proxy is uploaded and the result is stored on the video:
@@ -104,12 +112,19 @@ Instead the worker detects the net once the proxy is uploaded and the result is 
 - `confidence` is in `[0, 1]`. A client applies the suggestion automatically only at `confidence >= 0.7`
   (`HIGH_CONFIDENCE` in `snipnet_ml.court_detect`), and only when the user has not saved a court yet. Lower
   values may be shown as a hint. The user always confirms or corrects the pre-filled court before saving.
-- Worker side (not part of this contract change, to be added with the API): after `upload-complete` the API
-  enqueues a detection task, the worker calls `snipnet_ml.court_detect.detect_court(proxy)` and posts the result to
-  an internal endpoint, e.g. `POST /internal/videos/:id/court-suggestion` with a `CourtSuggestion` body (`204`).
+- The first successful `upload-complete` enqueues one detection task for the video (a repeated call does not queue
+  another). The worker claims it through `POST /internal/court-detection/claim`, downloads the proxy, calls
+  `snipnet_ml.court_detect.detect_court(proxy)` and posts the outcome to `POST /internal/videos/:id/court-suggestion`:
+  the `CourtSuggestion` body, or a JSON `null` body when no net was found. The endpoint validates that every
+  ROI and `netPoint` coordinate and `confidence` are in `[0, 1]` and that the ROI lies inside the frame.
+- Failures go to `POST /internal/videos/:id/court-suggestion/fail`. A video the detector cannot decode
+  (`InvalidInputError`) is reported non-retryable, everything else retryable up to 3 attempts. Leases work as for
+  jobs (10 minutes, then another worker may claim the task). The detection never changes `Video.status` and is not
+  a `Job`, so a failed detection only leaves `courtSuggestion` at `null`; the user can still mark the court by hand.
+- A worker claims pending detection tasks before analysis jobs, since the user waits for the pre-filled court.
 
-Until the API serves the field, clients treat a missing `courtSuggestion` like `null`. The detector can be tried
-locally with `python -m snipnet_ml.court_detect proxy.mp4`, which prints the `CourtSuggestion` JSON.
+Clients treat a missing `courtSuggestion` like `null`. The detector can be tried locally with
+`python -m snipnet_ml.court_detect proxy.mp4`, which prints the `CourtSuggestion` JSON.
 
 ## Proxy upload
 

@@ -1,11 +1,11 @@
 import type { FastifyPluginCallbackTypebox } from '@fastify/type-provider-typebox';
-import { sql, type Selectable, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Selectable, type Transaction } from 'kysely';
 import Type from 'typebox';
 
-import type { Database, JobsTable, VideosTable } from '../db/types.js';
+import type { CourtDetectionTasksTable, Database, JobsTable, VideosTable } from '../db/types.js';
 import { AppError } from '../errors.js';
 import { requireInternalToken } from '../plugins/internal-auth.js';
-import { Court, Job, Video } from '../schemas.js';
+import { Court, CourtSuggestion, CourtSuggestionBody, Job, Video } from '../schemas.js';
 import { assertValidSegments, SegmentInput, serializeSegments } from '../segments.js';
 import { toJob, toVideo } from '../serialize.js';
 
@@ -21,6 +21,9 @@ export const LEASE_MINUTES = 10;
 const RESULT_BODY_LIMIT = 16 * 1024 * 1024;
 
 const PROXY_CHANGED_MESSAGE = 'The proxy was changed or removed after the upload was confirmed';
+
+/** Tolerance for floating point error when checking that a ROI lies inside the frame. */
+const EPSILON = 1e-9;
 
 const JobParams = Type.Object({ id: Type.String() });
 
@@ -45,7 +48,25 @@ const ResultBody = Type.Object(
   { additionalProperties: false },
 );
 
+/** Failure report of a job or a court detection task, sent by the worker that holds the lease. */
+const FailBody = Type.Object(
+  { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
+  { additionalProperties: false },
+);
+
 type Tx = Transaction<Database>;
+
+/**
+ * Rows a worker may claim, shared by jobs and court detection tasks: queued ones, and running ones whose worker
+ * stopped reporting so that their lease expired.
+ */
+function isClaimable<T extends 'jobs' | 'court_detection_tasks'>(eb: ExpressionBuilder<Database, T>) {
+  const row = eb as unknown as ExpressionBuilder<Database, 'jobs'>;
+  return row.or([
+    row('status', '=', 'queued'),
+    row.and([row('status', '=', 'running'), row('lease_expires_at', '<', sql<Date>`now()`)]),
+  ]);
+}
 
 /** Worker endpoints under `/internal/jobs/*`, guarded by `INTERNAL_TOKEN` instead of a user token. */
 export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: string }> = (
@@ -55,6 +76,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
 ) => {
   app.addSchema(Job);
   app.addSchema(Court);
+  app.addSchema(CourtSuggestion);
   app.addSchema(Video);
 
   // `onRequest` runs before body parsing and validation, so unauthenticated callers learn nothing about the schema.
@@ -62,6 +84,15 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
 
   const security = [{ internalToken: [] }];
   const error = Type.Ref('ErrorResponse');
+
+  /** Route schema shared by the failure reports of jobs and court detection tasks. */
+  const failSchema = {
+    tags: ['internal'],
+    security,
+    params: JobParams,
+    body: FailBody,
+    response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
+  };
 
   /**
    * Marks a job failed for good and fails its video. Used when the retry budget is spent, either because the
@@ -113,12 +144,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         const candidate = await trx
           .selectFrom('jobs')
           .selectAll()
-          .where((eb) =>
-            eb.or([
-              eb('status', '=', 'queued'),
-              eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<', sql<Date>`now()`)]),
-            ]),
-          )
+          .where(isClaimable)
           .orderBy('created_at')
           .orderBy('id')
           .limit(1)
@@ -284,38 +310,187 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
   );
 
+  app.post('/jobs/:id/fail', { schema: failSchema }, async (request, reply) => {
+    const { error: message, retryable } = request.body;
+    await app.db.transaction().execute(async (trx) => {
+      const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
+      if (retryable && job.attempts < MAX_ATTEMPTS) {
+        // Back to the queue for another worker; the video stays `analyzing`.
+        await trx
+          .updateTable('jobs')
+          .set({ status: 'queued', error: message, worker_id: null, lease_expires_at: null, progress: 0 })
+          .where('id', '=', job.id)
+          .execute();
+      } else {
+        await failPermanently(trx, job, message);
+      }
+    });
+    return reply.code(204).send(null);
+  });
+
+  /**
+   * Picks the oldest queued detection task, or a running one whose lease expired, and leases it to `workerId`. A
+   * task that used up its attempts is failed instead. The suggestion just stays null then; the user can still
+   * mark the court by hand, so this never blocks the video.
+   */
+  async function claimCourtTask(workerId: string): Promise<Selectable<VideosTable> | null> {
+    return app.db.transaction().execute(async (trx) => {
+      for (;;) {
+        const candidate = await trx
+          .selectFrom('court_detection_tasks')
+          .selectAll()
+          .where(isClaimable)
+          .orderBy('created_at')
+          .orderBy('video_id')
+          .limit(1)
+          .forUpdate()
+          .skipLocked()
+          .executeTakeFirst();
+        if (candidate === undefined) return null;
+
+        if (candidate.attempts >= MAX_ATTEMPTS) {
+          await trx
+            .updateTable('court_detection_tasks')
+            .set({
+              status: 'failed',
+              error: `Gave up after ${String(MAX_ATTEMPTS)} attempts without a result`,
+              lease_expires_at: null,
+            })
+            .where('video_id', '=', candidate.video_id)
+            .execute();
+          continue;
+        }
+
+        await trx
+          .updateTable('court_detection_tasks')
+          .set({
+            status: 'running',
+            attempts: candidate.attempts + 1,
+            worker_id: workerId,
+            error: null,
+            lease_expires_at: sql<Date>`now() + make_interval(mins => ${LEASE_MINUTES})`,
+          })
+          .where('video_id', '=', candidate.video_id)
+          .execute();
+        return trx
+          .selectFrom('videos')
+          .selectAll()
+          .where('id', '=', candidate.video_id)
+          .executeTakeFirstOrThrow();
+      }
+    });
+  }
+
+  /**
+   * Locks the video's detection task and requires it to be running, so a late report cannot resurrect a task. With
+   * `workerId` the task must also still be leased to that worker: a failure report from a worker whose lease expired
+   * would otherwise requeue the attempt of the worker that took the task over.
+   */
+  async function lockRunningCourtTask(
+    trx: Tx,
+    videoId: string,
+    workerId?: string,
+  ): Promise<Selectable<CourtDetectionTasksTable>> {
+    if (!UUID_PATTERN.test(videoId)) throw new AppError('not_found', 'Video not found');
+    const task = await trx
+      .selectFrom('court_detection_tasks')
+      .selectAll()
+      .where('video_id', '=', videoId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (task === undefined) throw new AppError('not_found', 'Court detection task not found');
+    if (task.status !== 'running') {
+      throw new AppError('conflict', `Court detection task is ${task.status}, not running`);
+    }
+    if (workerId !== undefined && task.worker_id !== workerId) {
+      throw new AppError(
+        'conflict',
+        'Court detection task is held by another worker, its lease was taken over',
+      );
+    }
+    return task;
+  }
+
   app.post(
-    '/jobs/:id/fail',
+    '/court-detection/claim',
+    {
+      schema: {
+        tags: ['internal'],
+        security,
+        body: Type.Object({ workerId: WorkerId }, { additionalProperties: false }),
+        response: {
+          200: Type.Object({ videoId: Type.String({ format: 'uuid' }), proxyUrl: Type.String() }),
+          204: Type.Null(),
+          400: error,
+          401: error,
+        },
+      },
+    },
+    async (request, reply) => {
+      const video = await claimCourtTask(request.body.workerId);
+      if (video === null) return reply.code(204).send(null);
+      return { videoId: video.id, proxyUrl: await app.storage.presignDownload(video.object_key) };
+    },
+  );
+
+  app.post(
+    '/videos/:id/court-suggestion',
     {
       schema: {
         tags: ['internal'],
         security,
         params: JobParams,
-        body: Type.Object(
-          { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
-          { additionalProperties: false },
-        ),
+        // `null` reports that the detection ran but found no net.
+        body: Type.Union([CourtSuggestionBody, Type.Null()]),
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
       },
     },
     async (request, reply) => {
-      const { error: message, retryable } = request.body;
-      await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
-        if (retryable && job.attempts < MAX_ATTEMPTS) {
-          // Back to the queue for another worker; the video stays `analyzing`.
-          await trx
-            .updateTable('jobs')
-            .set({ status: 'queued', error: message, worker_id: null, lease_expires_at: null, progress: 0 })
-            .where('id', '=', job.id)
-            .execute();
-        } else {
-          await failPermanently(trx, job, message);
+      const suggestion = request.body;
+      if (suggestion !== null) {
+        const { roi } = suggestion.court;
+        if (roi.x + roi.width > 1 + EPSILON || roi.y + roi.height > 1 + EPSILON) {
+          throw new AppError('validation_error', 'roi must lie inside the frame');
         }
+      }
+      await app.db.transaction().execute(async (trx) => {
+        await lockRunningCourtTask(trx, request.params.id);
+        await trx
+          .updateTable('videos')
+          .set({
+            court_suggestion: suggestion === null ? null : JSON.stringify(suggestion),
+            updated_at: sql<Date>`now()`,
+          })
+          .where('id', '=', request.params.id)
+          .execute();
+        await trx
+          .updateTable('court_detection_tasks')
+          .set({ status: 'succeeded', error: null, lease_expires_at: null })
+          .where('video_id', '=', request.params.id)
+          .execute();
       });
       return reply.code(204).send(null);
     },
   );
+
+  app.post('/videos/:id/court-suggestion/fail', { schema: failSchema }, async (request, reply) => {
+    const { workerId, error: message, retryable } = request.body;
+    await app.db.transaction().execute(async (trx) => {
+      const task = await lockRunningCourtTask(trx, request.params.id, workerId);
+      const requeue = retryable && task.attempts < MAX_ATTEMPTS;
+      await trx
+        .updateTable('court_detection_tasks')
+        .set({
+          status: requeue ? 'queued' : 'failed',
+          error: message,
+          worker_id: null,
+          lease_expires_at: null,
+        })
+        .where('video_id', '=', request.params.id)
+        .execute();
+    });
+    return reply.code(204).send(null);
+  });
 
   done();
 };

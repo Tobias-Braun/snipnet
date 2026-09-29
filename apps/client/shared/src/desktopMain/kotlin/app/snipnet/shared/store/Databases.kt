@@ -27,9 +27,15 @@ class ClosableDatabase(
 /** Like [openDatabase], but returns a handle that can close the underlying connection. */
 fun openClosableDatabase(file: Path): ClosableDatabase {
     Files.createDirectories(file.toAbsolutePath().parent)
-    val driver = JdbcSqliteDriver("jdbc:sqlite:${file.toAbsolutePath()}")
-    return ClosableDatabase(databaseOn(driver), driver)
+    return closableDatabaseOn(JdbcSqliteDriver("jdbc:sqlite:${file.toAbsolutePath()}"))
 }
+
+/**
+ * Creates or migrates the schema on [driver] and wraps it in a [ClosableDatabase] that closes [driver]. Split out of
+ * [openClosableDatabase] so tests can hand in a driver they observe: deleting an open SQLite file succeeds on macOS and
+ * Linux, so watching the driver is the only portable way to see that a connection was released.
+ */
+fun closableDatabaseOn(driver: SqlDriver): ClosableDatabase = ClosableDatabase(databaseOn(driver), driver)
 
 /** A throwaway database that lives only as long as the returned driver connection; used by tests. */
 fun openInMemoryDatabase(): SnipnetDatabase = databaseOn(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))

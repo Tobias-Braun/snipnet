@@ -112,6 +112,9 @@ fun CourtSelectionScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        if (state.prefilledFromDetection) {
+            Text("The net was found automatically. Check the box and adjust it if needed.")
+        }
         state.saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(onClick = { container.navigator.back() }) { Text("Back") }

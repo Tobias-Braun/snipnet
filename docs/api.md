@@ -23,9 +23,10 @@ Roi         { x, y, width, height }            // normalized
 Point       { x, y }                           // normalized
 Court       { roi: Roi, netPoint: Point }
 VideoStatus = "created" | "uploaded" | "analyzing" | "analyzed" | "failed"
+CourtSuggestion { court: Court, confidence: number /*0..1*/ }
 Video       { id, filename, durationMs, width, height, fps, proxySizeBytes,
-              status: VideoStatus, court: Court | null, createdAt, updatedAt,
-              latestJob: Job | null }
+              status: VideoStatus, court: Court | null, courtSuggestion: CourtSuggestion | null,
+              createdAt, updatedAt, latestJob: Job | null }
 JobStatus   = "queued" | "running" | "succeeded" | "failed"
 Job         { id, videoId, status: JobStatus, progress: number /*0..1*/, modelVersion: string | null,
               error: string | null, attempts: number, createdAt, startedAt, finishedAt }
@@ -71,6 +72,23 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `POST /internal/jobs/:id/progress` | `{ progress }` | `204`, extends lease |
 | `POST /internal/jobs/:id/result` | `{ modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
 | `POST /internal/jobs/:id/fail` | `{ error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
+
+## Court suggestion (proposal)
+
+The court has to be known before `analyze`, so the automatic net detection cannot run inside the analyze job.
+Instead the worker detects the net once the proxy is uploaded and the result is stored on the video:
+
+- `Video.courtSuggestion` is `null` until the detection has run and whenever no net was found. It never replaces
+  `Video.court`, which stays the user's confirmed choice and the only thing `analyze` reads.
+- `confidence` is in `[0, 1]`. A client applies the suggestion automatically only at `confidence >= 0.7`
+  (`HIGH_CONFIDENCE` in `snipnet_ml.court_detect`), and only when the user has not saved a court yet. Lower
+  values may be shown as a hint. The user always confirms or corrects the pre-filled court before saving.
+- Worker side (not part of this contract change, to be added with the API): after `upload-complete` the API
+  enqueues a detection task, the worker calls `snipnet_ml.court_detect.detect_court(proxy)` and posts the result to
+  an internal endpoint, e.g. `POST /internal/videos/:id/court-suggestion` with a `CourtSuggestion` body (`204`).
+
+Until the API serves the field, clients treat a missing `courtSuggestion` like `null`. The detector can be tried
+locally with `python -m snipnet_ml.court_detect proxy.mp4`, which prints the `CourtSuggestion` JSON.
 
 ## Proxy upload
 

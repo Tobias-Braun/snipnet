@@ -8,6 +8,7 @@ import app.snipnet.desktop.video.VideoPlayer
 import app.snipnet.desktop.video.Waveform
 import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.model.Court
+import app.snipnet.shared.model.CourtSuggestion
 import app.snipnet.shared.model.Point
 import app.snipnet.shared.model.Roi
 import app.snipnet.shared.store.ProjectStore
@@ -26,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -88,6 +90,9 @@ class CourtSelectionStateHolderTest {
     private val uploads = mutableListOf<Pair<String, Court>>()
     private var uploadError: ApiError? = null
     private var saved = 0
+    private var suggestion: CourtSuggestion? = null
+    private var suggestionError: ApiError? = null
+    private val detectedCourt = Court(Roi(0.2, 0.15, 0.6, 0.7), Point(0.5, 0.5))
 
     private fun TestScope.holder(projectId: String = "p1") =
         CourtSelectionStateHolder(
@@ -99,6 +104,10 @@ class CourtSelectionStateHolderTest {
                 uploads += id to court
             },
             onSaved = { saved++ },
+            loadSuggestion = {
+                suggestionError?.let { throw it }
+                suggestion
+            },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
 
@@ -142,6 +151,61 @@ class CourtSelectionStateHolderTest {
             holder.setNetPoint(Point(0.5, 0.5))
             assertEquals(CourtGeometry.defaultRoi(Point(0.5, 0.5)), holder.state.value.roi)
             assertTrue(holder.state.value.canSave)
+        }
+
+    @Test
+    fun aConfidentSuggestionPrefillsTheCourtAndCanBeSaved() =
+        runTest {
+            suggestion = CourtSuggestion(detectedCourt, 0.9)
+            val project = store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            val holder = holder(project.id)
+            advanceUntilIdle()
+
+            assertEquals(detectedCourt.netPoint, holder.state.value.netPoint)
+            assertEquals(detectedCourt.roi, holder.state.value.roi)
+            assertTrue(holder.state.value.prefilledFromDetection)
+            assertTrue(holder.state.value.canSave)
+
+            holder.setRoi(Roi(0.1, 0.1, 0.5, 0.5))
+            assertFalse(holder.state.value.prefilledFromDetection)
+        }
+
+    @Test
+    fun aLowConfidenceSuggestionIsNotApplied() =
+        runTest {
+            suggestion = CourtSuggestion(detectedCourt, 0.4)
+            val project = store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            val holder = holder(project.id)
+            advanceUntilIdle()
+
+            assertNull(holder.state.value.netPoint)
+            assertNull(holder.state.value.roi)
+        }
+
+    @Test
+    fun aSavedCourtIsNeverOverwrittenBySuggestion() =
+        runTest {
+            suggestion = CourtSuggestion(detectedCourt, 0.9)
+            val project = store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            val own = Court(Roi(0.1, 0.1, 0.3, 0.3), Point(0.25, 0.25))
+            store.setCourt(project.id, own)
+            val holder = holder(project.id)
+            advanceUntilIdle()
+
+            assertEquals(own.roi, holder.state.value.roi)
+            assertFalse(holder.state.value.prefilledFromDetection)
+        }
+
+    @Test
+    fun aFailingSuggestionRequestLeavesTheManualFlowIntact() =
+        runTest {
+            suggestionError = ApiError.Network(RuntimeException("offline"))
+            val project = store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            val holder = holder(project.id)
+            advanceUntilIdle()
+
+            assertNull(holder.state.value.loadError)
+            assertNull(holder.state.value.netPoint)
         }
 
     @Test

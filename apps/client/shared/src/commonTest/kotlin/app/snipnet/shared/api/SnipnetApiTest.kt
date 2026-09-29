@@ -84,6 +84,21 @@ class SnipnetApiTest {
     private fun bodyOf(recorder: Recorder): JsonObject = Json.parseToJsonElement(recorder.lastBody).jsonObject
 
     @Test
+    fun videoDecodesTheCourtSuggestionAndTreatsItsAbsenceAsNull() =
+        runTest {
+            val suggestion =
+                """"courtSuggestion":{"court":{"roi":{"x":0.2,"y":0.15,"width":0.6,"height":0.7},
+                    "netPoint":{"x":0.5,"y":0.5}},"confidence":0.85},"""
+            val body = videoJson.replace(""""court":null,""", """"court":null,$suggestion""")
+            val video = api { ok(body) }.getVideo("v1")
+            val net = video.courtSuggestion?.court?.netPoint
+            assertEquals(0.5, net?.x)
+            assertTrue(video.courtSuggestion?.isHighConfidence == true)
+
+            assertNull(api { ok(videoJson) }.getVideo("v1").courtSuggestion)
+        }
+
+    @Test
     fun healthNeedsNoAuth() =
         runTest {
             val rec = Recorder()

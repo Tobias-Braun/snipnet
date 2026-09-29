@@ -6,6 +6,7 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -27,11 +28,12 @@ private const val DRAIN_TIMEOUT_MS = 5_000L
 class AppContainerCloseTest {
     private val dataDir = Files.createTempDirectory("snipnet-close")
     private val dispatcher = StandardTestDispatcher()
+    private val engine = MockEngine { respond("{}") }
 
     private fun container() =
         AppContainer(
             dataDir,
-            engine = MockEngine { respond("{}") },
+            engine = engine,
             baseUrl = "http://snipnet.test",
             videoEngineOverride = FakeEngine(),
         )
@@ -75,5 +77,18 @@ class AppContainerCloseTest {
 
         container.close()
         container.close()
+    }
+
+    /**
+     * Ktor does not close an engine that was handed to `HttpClient(engine)` when the client closes, so the container
+     * has to close it itself; a CIO engine would otherwise keep its selector and dispatcher threads alive.
+     */
+    @Test
+    fun closeClosesTheHttpEngine() {
+        val container = container()
+
+        container.close()
+
+        assertFalse(engine.coroutineContext[Job]!!.isActive, "the HTTP engine should be closed by close()")
     }
 }

@@ -105,15 +105,20 @@ class AppContainer(
     }
 
     /**
-     * Stops everything the container started: the save-queue loop, a running import or upload, the HTTP client (and
-     * with it the shared engine) and the database connection. Called when the window closes and by tests, which would
-     * otherwise leave the loop running and the database file open for the rest of the JVM. Safe to call twice; the
-     * container must not be used afterwards.
+     * Stops everything the container started: the save-queue loop, a running import or upload, the HTTP client, the
+     * shared [engine] and the database connection. Called when the window closes and by tests, which would otherwise
+     * leave the loop running and the database file open for the rest of the JVM. Safe to call twice; the container
+     * must not be used afterwards.
+     *
+     * The engine is closed explicitly because Ktor's `HttpClient(engine)` does not manage an engine instance it was
+     * handed, so closing [api] alone would leave a CIO engine's selector and dispatcher threads running. The container
+     * owns the engine either way: the uploader shares it and nothing else outlives the container.
      */
     override fun close() {
         backgroundScope.cancel()
         if (pipelineLazy.isInitialized()) pipeline.reset()
         api.close()
+        engine.close()
         if (database.isInitialized()) database.value.close()
     }
 

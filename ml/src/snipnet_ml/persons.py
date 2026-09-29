@@ -401,16 +401,10 @@ def extract_person_features(
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
         aspect = stream.codec_context.width / stream.codec_context.height
-    last_time = 0.0
-
-    def remember(time_s: float) -> None:
-        nonlocal last_time
-        last_time = time_s
-
-    frames = track_persons(decode_rgb_frames(path, config.fps), court.roi, detector, config, remember)
+    frames = track_persons(decode_rgb_frames(path, config.fps), court.roi, detector, config)
     if not frames:
         raise ValueError(f"no video frames decoded from {path}")
-    duration = probe_duration(path) or last_time + 1.0 / config.fps
+    duration = probe_duration(path) or frames[-1].time_s + 1.0 / config.fps
     return person_features(frames, court, aspect, duration, config)
 
 

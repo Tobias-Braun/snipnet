@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
@@ -197,6 +197,52 @@ describe('court suggestion', () => {
         .where('id', '=', videoId)
         .executeTakeFirstOrThrow();
       expect(video.status).toBe('uploaded');
+    });
+
+    it('fails the task for good instead of handing out a proxy replaced after upload-complete', async () => {
+      const { user, videoId } = await freshTask();
+      await app.db
+        .updateTable('videos')
+        .set({ proxy_etag: '"recorded"' })
+        .where('id', '=', videoId)
+        .execute();
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo');
+      objectInfo.mockResolvedValue({ sizeBytes: 2048, etag: '"replaced"' });
+      let response;
+      try {
+        response = await claim();
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      expect(response.statusCode).toBe(204);
+      expect(await taskOf(videoId)).toMatchObject({
+        status: 'failed',
+        attempts: 0,
+        error: expect.stringContaining('changed') as string,
+      });
+      expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: null });
+      expect((await claim()).statusCode).toBe(204);
+    });
+
+    it('hands out the task when the proxy still has the recorded ETag', async () => {
+      const { videoId } = await freshTask();
+      await app.db
+        .updateTable('videos')
+        .set({ proxy_etag: '"recorded"' })
+        .where('id', '=', videoId)
+        .execute();
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo');
+      objectInfo.mockResolvedValue({ sizeBytes: 2048, etag: '"recorded"' });
+      let response;
+      try {
+        response = await claim();
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json<{ videoId: string }>().videoId).toBe(videoId);
     });
 
     it('re-leases a running task whose lease expired', async () => {

@@ -409,6 +409,22 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           continue;
         }
 
+        const video = await trx
+          .selectFrom('videos')
+          .selectAll()
+          .where('id', '=', candidate.video_id)
+          .executeTakeFirstOrThrow();
+        // The presigned upload URL outlives upload-complete, so the proxy may have been replaced since. The
+        // suggestion would then describe another file; the task fails for good and the suggestion stays null.
+        if (!(await proxyIsUnchanged(video))) {
+          await trx
+            .updateTable('court_detection_tasks')
+            .set({ status: 'failed', error: PROXY_CHANGED_MESSAGE, lease_expires_at: null })
+            .where('video_id', '=', candidate.video_id)
+            .execute();
+          continue;
+        }
+
         await trx
           .updateTable('court_detection_tasks')
           .set({
@@ -420,11 +436,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           })
           .where('video_id', '=', candidate.video_id)
           .execute();
-        return trx
-          .selectFrom('videos')
-          .selectAll()
-          .where('id', '=', candidate.video_id)
-          .executeTakeFirstOrThrow();
+        return video;
       }
     });
   }

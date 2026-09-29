@@ -46,7 +46,7 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /v1/health` | – | `200 { status: "ok", version }` |
-| `POST /v1/auth/register` | `{ email, password }` (password ≥ 8 chars) | `201 { token, user }`, `409 conflict` |
+| `POST /v1/auth/register` | `{ email, password }` (password ≥ 8 chars) | `201 { token, user }`, `409 conflict`, `429 rate_limited` (rate limited per IP, 5 per minute) |
 | `POST /v1/auth/login` | `{ email, password }` | `200 { token, user }`, `401` |
 | `GET /v1/me` | – | `200 User` |
 | `PATCH /v1/me` | `{ trainingConsent }` | `200 User` |

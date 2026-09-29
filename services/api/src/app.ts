@@ -48,6 +48,7 @@ export async function buildApp(options: AppOptions) {
     version: config.version,
     adminToken: config.secrets.adminToken,
     waitlistRateLimit: config.waitlistRateLimit,
+    registerRateLimit: config.registerRateLimit,
   });
   await app.register(internalRoutes, {
     prefix: '/internal',

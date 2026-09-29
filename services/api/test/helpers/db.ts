@@ -26,6 +26,8 @@ function baseEnv(): NodeJS.ProcessEnv {
     INTERNAL_TOKEN: 'test-internal-token-0123456789',
     ADMIN_TOKEN: 'test-admin-token-0123456789',
     LOG_LEVEL: 'silent',
+    // Test files share one app across many registrations; the limit itself is tested in auth.test.ts.
+    REGISTER_RATE_LIMIT_MAX: '1000',
   };
 }
 

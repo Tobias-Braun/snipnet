@@ -594,19 +594,24 @@ describe('video routes', () => {
   });
 
   describe('DELETE /v1/videos/:id', () => {
-    it('removes the proxy object, the video and its jobs', async () => {
+    /** An uploaded video of a new user with one job in `status`, plus the key of its proxy object. */
+    async function uploadedVideoWithJob(status: 'queued' | 'running' | 'succeeded') {
       const user = await newUser();
       const { video, upload } = await createVideo(user.auth, 8);
       await uploadProxy(upload, new Uint8Array(8));
-      await app.db.insertInto('jobs').values({ video_id: video.id, status: 'succeeded' }).execute();
-      const key = `proxies/${user.id}/${video.id}.mp4`;
+      await app.db.insertInto('jobs').values({ video_id: video.id, status }).execute();
+      return { user, video, key: `proxies/${user.id}/${video.id}.mp4` };
+    }
+
+    function deleteVideo(user: { auth: { authorization: string } }, videoId: string) {
+      return app.inject({ method: 'DELETE', url: `/v1/videos/${videoId}`, headers: user.auth });
+    }
+
+    it('removes the proxy object, the video and its jobs', async () => {
+      const { user, video, key } = await uploadedVideoWithJob('succeeded');
       expect(await objectExists(key)).toBe(true);
 
-      const response = await app.inject({
-        method: 'DELETE',
-        url: `/v1/videos/${video.id}`,
-        headers: user.auth,
-      });
+      const response = await deleteVideo(user, video.id);
 
       expect(response.statusCode).toBe(204);
       expect(response.body).toBe('');
@@ -618,17 +623,9 @@ describe('video routes', () => {
     });
 
     it('drops a queued job together with the video', async () => {
-      const user = await newUser();
-      const { video, upload } = await createVideo(user.auth, 8);
-      await uploadProxy(upload, new Uint8Array(8));
-      await app.db.insertInto('jobs').values({ video_id: video.id, status: 'queued' }).execute();
-      const key = `proxies/${user.id}/${video.id}.mp4`;
+      const { user, video, key } = await uploadedVideoWithJob('queued');
 
-      const response = await app.inject({
-        method: 'DELETE',
-        url: `/v1/videos/${video.id}`,
-        headers: user.auth,
-      });
+      const response = await deleteVideo(user, video.id);
 
       expect(response.statusCode).toBe(204);
       expect(await objectExists(key)).toBe(false);
@@ -650,7 +647,7 @@ describe('video routes', () => {
       await claim.selectFrom('jobs').select('id').where('id', '=', job.id).forUpdate().execute();
       let response;
       try {
-        response = await app.inject({ method: 'DELETE', url: `/v1/videos/${video.id}`, headers: user.auth });
+        response = await deleteVideo(user, video.id);
       } finally {
         await claim.rollback().execute();
       }
@@ -662,17 +659,9 @@ describe('video routes', () => {
     });
 
     it('answers 409 and keeps everything while a job is running', async () => {
-      const user = await newUser();
-      const { video, upload } = await createVideo(user.auth, 8);
-      await uploadProxy(upload, new Uint8Array(8));
-      await app.db.insertInto('jobs').values({ video_id: video.id, status: 'running' }).execute();
-      const key = `proxies/${user.id}/${video.id}.mp4`;
+      const { user, video, key } = await uploadedVideoWithJob('running');
 
-      const response = await app.inject({
-        method: 'DELETE',
-        url: `/v1/videos/${video.id}`,
-        headers: user.auth,
-      });
+      const response = await deleteVideo(user, video.id);
 
       expect(response.statusCode).toBe(409);
       expect(response.json()).toMatchObject({ error: { code: 'conflict' } });

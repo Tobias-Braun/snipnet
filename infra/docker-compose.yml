@@ -61,27 +61,34 @@ services:
         mc mb --ignore-existing "minio/$$S3_BUCKET"
     restart: 'no'
 
-  # The API joins the stack once its image exists (see the services/api issue). Its configuration is already
-  # documented in infra/.env.example; inside the Compose network the API and worker reach Postgres at postgres:5432 and MinIO at http://minio:9000 instead of localhost.
-  #
-  # api:
-  #   build: ../services/api
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     minio-init:
-  #       condition: service_completed_successfully
-  #   env_file: .env
-  #   environment:
-  #     API_PORT: 3000
-  #     PGHOST: postgres
-  #     PGPORT: 5432
-  #     S3_ENDPOINT: http://minio:9000
-  #   ports:
-  #     - '127.0.0.1:${API_PORT:-3000}:3000'
+  # Inside the Compose network the API reaches Postgres at postgres:5432 and MinIO at http://minio:9000 instead
+  # of localhost. It applies pending database migrations on startup. The container always listens on 3000;
+  # only the published host port is configurable.
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      API_PORT: 3000
+      PGHOST: postgres
+      PGPORT: 5432
+      S3_ENDPOINT: http://minio:9000
+    ports:
+      - '127.0.0.1:${API_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/v1/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   # The worker has no depends_on on the API: it treats connection errors as an empty queue and keeps polling,
-  # so it can start before the API service above is enabled or ready.
+  # so it can start before the API service above is ready.
   worker:
     build:
       context: ..

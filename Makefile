@@ -28,7 +28,7 @@ infra-down:
 	$(COMPOSE) down
 
 dev: infra-up
-	pnpm --parallel --filter @snipnet/api --filter @snipnet/web run dev
+	set -a; . infra/.env; set +a; pnpm --parallel --filter @snipnet/api --filter @snipnet/web run dev
 
 lint:
 	pnpm lint

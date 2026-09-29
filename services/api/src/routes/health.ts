@@ -1,4 +1,5 @@
 import type { FastifyPluginCallback } from 'fastify';
+import Type from 'typebox';
 
 export interface HealthRouteOptions {
   version: string;
@@ -9,15 +10,9 @@ export const healthRoutes: FastifyPluginCallback<HealthRouteOptions> = (app, opt
     '/health',
     {
       schema: {
+        tags: ['health'],
         response: {
-          200: {
-            type: 'object',
-            required: ['status', 'version'],
-            properties: {
-              status: { type: 'string', const: 'ok' },
-              version: { type: 'string' },
-            },
-          },
+          200: Type.Object({ status: Type.Literal('ok'), version: Type.String() }),
         },
       },
     },

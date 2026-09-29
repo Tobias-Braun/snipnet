@@ -85,7 +85,7 @@ private class FakeEngine(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class CourtSelectionStateHolderTest {
-    private val store = ProjectStore(openInMemoryDatabase(), newId = { "p1" }, now = { 1L })
+    private val store = ProjectStore(openInMemoryDatabase(), newId = { "p1" }, now = { 1L }, currentUserId = { "u1" })
     private val engine = FakeEngine()
     private val uploads = mutableListOf<Pair<String, Court>>()
     private var uploadError: ApiError? = null

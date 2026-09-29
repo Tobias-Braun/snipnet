@@ -6,6 +6,7 @@ import app.snipnet.desktop.video.ProxyTranscoder
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.video.VideoInfo
 import app.snipnet.desktop.video.VideoPlayer
+import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.api.SnipnetApi
 import app.snipnet.shared.model.Court
 import app.snipnet.shared.model.Point
@@ -35,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -49,6 +51,12 @@ class ImportPipelineTest {
     private var videoCourt: String = "null"
     private val jobs = CopyOnWriteArrayList<String>()
     private val analyzed = CopyOnWriteArrayList<Project>()
+
+    /** The account the store acts as; tests change it to simulate logout and login. */
+    @Volatile private var signedIn: String? = "u1"
+
+    /** Makes `GET /v1/videos` answer 503, to show what the list looks like while the server is unreachable. */
+    @Volatile private var videoListDown = false
 
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
@@ -139,6 +147,12 @@ class ImportPipelineTest {
                         json,
                     )
                 }
+                path == "/v1/videos" && videoListDown ->
+                    respond(
+                        """{"error":{"code":"unavailable","message":"down"}}""",
+                        HttpStatusCode.ServiceUnavailable,
+                        json,
+                    )
                 path == "/v1/videos" -> respond("""{"items":[${videoJson()}]}""", HttpStatusCode.OK, json)
                 path == "/v1/videos/v1/upload-complete" -> {
                     videoStatus = "uploaded"
@@ -178,7 +192,13 @@ class ImportPipelineTest {
 
     private val api = SnipnetApi(engine, "http://api.test")
     private var counter = 0
-    private val store = ProjectStore(openInMemoryDatabase(), newId = { "p${++counter}" }, now = { 1_000L })
+    private val store =
+        ProjectStore(
+            openInMemoryDatabase(),
+            newId = { "p${++counter}" },
+            now = { 1_000L },
+            currentUserId = { signedIn },
+        )
     private val pipeline =
         ImportPipeline(
             api = api,
@@ -321,6 +341,21 @@ class ImportPipelineTest {
             assertNotNull(requests.find { it == "GET /v1/jobs/j1" })
             assertTrue("POST /v1/videos/v1/analyze" !in requests)
             assertTrue(analyzed.isEmpty(), "a resumed analysis must not pull the user into the editor")
+        }
+
+    @Test
+    fun aFailingRefreshAfterReLoginStillShowsTheUsersLocalProjects() =
+        runBlocking<Unit> {
+            val project = store.create(original.toString())
+            signedIn = null
+            pipeline.reset()
+            assertTrue(pipeline.rows.value.isEmpty())
+
+            signedIn = "u1"
+            videoListDown = true
+            assertFailsWith<ApiError> { pipeline.refresh() }
+
+            assertEquals(listOf(project.id), pipeline.rows.value.map { it.project.id })
         }
 
     @Test

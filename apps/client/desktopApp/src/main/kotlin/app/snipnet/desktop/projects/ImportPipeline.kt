@@ -101,8 +101,15 @@ class ImportPipeline(
         return rejected
     }
 
-    /** Fetches the server's video list and resumes polling analyses that were running when the app was closed. */
+    /**
+     * Fetches the server's video list and resumes polling analyses that were running when the app was closed.
+     *
+     * The local rows are published first: the store lists only the signed-in user's projects, and the account may have
+     * changed since the last publish (logout publishes an empty list). Without this, a user whose first refresh after
+     * login fails would see no projects at all instead of their local data.
+     */
     suspend fun refresh() {
+        publish()
         val list = api.listVideos()
         synchronized(lock) {
             videos = list.associateBy { it.id }
@@ -173,7 +180,10 @@ class ImportPipeline(
         }
     }
 
-    /** Stops everything and forgets the in-memory state, used on logout before the store is cleared. */
+    /**
+     * Stops everything and forgets the in-memory state, used on logout. The republished list is empty because the
+     * store only lists the signed-in user's projects and nobody is signed in any more.
+     */
     fun reset() {
         scope.cancel()
         synchronized(lock) {

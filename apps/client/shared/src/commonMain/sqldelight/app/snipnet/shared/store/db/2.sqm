@@ -1,0 +1,5 @@
+-- Version 3: projects belong to the account that created them. Rows that exist before this migration have no known
+-- owner (user_id stays NULL); they are kept on disk but no account sees them, since guessing an owner could hand one
+-- account's videos to another.
+ALTER TABLE project ADD COLUMN user_id TEXT;
+CREATE INDEX project_user ON project(user_id);

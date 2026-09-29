@@ -57,6 +57,7 @@ class AppContainer(
             openDatabase(dataDir.resolve("snipnet.db")),
             newId = { UUID.randomUUID().toString() },
             now = System::currentTimeMillis,
+            currentUserId = { session.user.value?.id },
         )
     }
 
@@ -94,10 +95,7 @@ class AppContainer(
     }
 
     val session =
-        Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = {
-            pipeline.reset()
-            projectStore.clear()
-        })
+        Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = { pipeline.reset() })
 
     /** Backs the projects screen; the caller closes it when the screen leaves the composition. */
     fun projectsStateHolder() = ProjectsStateHolder(pipeline)

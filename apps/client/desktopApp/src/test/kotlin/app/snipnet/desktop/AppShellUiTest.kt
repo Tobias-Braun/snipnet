@@ -20,6 +20,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
@@ -76,7 +77,11 @@ class AppShellUiTest {
                     baseUrl = "http://snipnet.test",
                     videoEngineOverride = FakeEngine(),
                 )
+            // The project belongs to the account, so it is created while that account is signed in. Signing out
+            // afterwards keeps it (projects are not cleared on logout) and the UI then signs in through the form.
+            runBlocking { container.session.login("anna@example.com", "correct horse battery") }
             val project = container.projectStore.create("/videos/match.mp4", remoteVideoId = "remote-1")
+            container.session.logout()
 
             setContent { App(container) }
 

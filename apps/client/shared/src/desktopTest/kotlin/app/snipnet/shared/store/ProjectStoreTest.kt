@@ -10,6 +10,7 @@ import app.snipnet.shared.model.Segment
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -17,8 +18,63 @@ class ProjectStoreTest {
     private var clock = 1_000L
     private var counter = 0
 
+    /** The account the stores of this test act as; tests change it to simulate logout and login. */
+    private var signedIn: String? = "u1"
+
     private fun store(database: app.snipnet.shared.store.db.SnipnetDatabase = openInMemoryDatabase()) =
-        ProjectStore(database, newId = { "p${++counter}" }, now = { clock })
+        ProjectStore(database, newId = { "p${++counter}" }, now = { clock }, currentUserId = { signedIn })
+
+    @Test
+    fun twoUsersOnlySeeTheirOwnProjects() {
+        val store = store()
+        val annas = store.create("/anna.mp4", remoteVideoId = "remote-1").id
+        signedIn = "u2"
+        val bens = store.create("/ben.mp4", remoteVideoId = "remote-1").id
+
+        assertEquals(listOf(bens), store.list().map { it.id })
+        assertEquals(bens, store.findByRemoteVideoId("remote-1")?.id)
+
+        signedIn = "u1"
+        assertEquals(listOf(annas), store.list().map { it.id })
+        assertEquals(annas, store.findByRemoteVideoId("remote-1")?.id)
+    }
+
+    @Test
+    fun pendingSavesAreScopedToTheUser() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        store.setPendingSave(id, PendingSave(null, listOf(Segment(0, 10)), emptyList(), isFinal = false))
+        assertEquals(listOf(id), store.withPendingSave().map { it.id })
+
+        signedIn = "u2"
+        assertEquals(emptyList(), store.withPendingSave())
+        signedIn = null
+        assertEquals(emptyList(), store.withPendingSave())
+    }
+
+    @Test
+    fun draftsSurviveLogoutAndReLogin() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        val draft = listOf(Segment(0, 500), Segment(1_000, 2_000))
+        store.saveDraft(id, draft)
+
+        signedIn = null
+        assertEquals(emptyList(), store.list())
+
+        signedIn = "u2"
+        assertEquals(emptyList(), store.list())
+
+        signedIn = "u1"
+        assertEquals(draft, store.list().single().draftSegments)
+    }
+
+    @Test
+    fun creatingWithoutASignedInUserFails() {
+        val store = store()
+        signedIn = null
+        assertFailsWith<IllegalStateException> { store.create("/a.mp4") }
+    }
 
     @Test
     fun createdProjectIsReadBack() {
@@ -116,8 +172,12 @@ class ProjectStoreTest {
         old.execute(null, "PRAGMA user_version = 1", 0)
         old.close()
 
-        val project = assertNotNull(store(openDatabase(file)).get("old"))
+        val migrated = store(openDatabase(file))
+        val project = assertNotNull(migrated.get("old"))
 
+        // Rows from before the per-user scoping have no owner and are hidden from every account.
+        assertEquals(emptyList(), migrated.list())
+        assertNull(migrated.findByRemoteVideoId("remote-1"))
         assertEquals("remote-1", project.remoteVideoId)
         assertNull(project.baseSetId)
         assertNull(project.pendingSave)
@@ -148,14 +208,12 @@ class ProjectStoreTest {
     }
 
     @Test
-    fun deleteAndClearRemoveProjects() {
+    fun deleteRemovesTheProject() {
         val store = store()
         val a = store.create("/a.mp4").id
         store.create("/b.mp4")
         store.delete(a)
         assertEquals(1, store.list().size)
-        store.clear()
-        assertEquals(emptyList(), store.list())
         assertNull(store.get(a))
     }
 

@@ -9,6 +9,7 @@ import { dbPlugin } from './plugins/db.js';
 import { errorsPlugin } from './plugins/errors.js';
 import { openapiPlugin } from './plugins/openapi.js';
 import { generateRequestId, requestIdPlugin } from './plugins/request-id.js';
+import { storagePlugin } from './plugins/storage.js';
 import { v1Routes } from './routes/index.js';
 import { ErrorResponse } from './schemas.js';
 
@@ -36,6 +37,7 @@ export async function buildApp(options: AppOptions) {
   await app.register(errorsPlugin);
   await app.register(cors, { origin: config.webOrigins, methods: ['GET', 'POST', 'OPTIONS'] });
   await app.register(dbPlugin, { database: config.database });
+  await app.register(storagePlugin, { s3: config.s3 });
   await app.register(authPlugin, { secret: config.secrets.jwt });
   // Opt-in: only routes that set `config.rateLimit` are limited, the rest stay unaffected.
   await app.register(fastifyRateLimit, { global: false });

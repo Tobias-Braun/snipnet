@@ -6,6 +6,10 @@ const required = {
   PGUSER: 'u',
   PGPASSWORD: 'p',
   PGDATABASE: 'd',
+  S3_ENDPOINT: 'http://minio:9000',
+  S3_BUCKET: 'proxies',
+  S3_ACCESS_KEY: 'access',
+  S3_SECRET_KEY: 'secret-key',
   JWT_SECRET: 'jwt-secret-0123456789',
   INTERNAL_TOKEN: 'internal-token-0123456789',
   ADMIN_TOKEN: 'admin-token-0123456789',
@@ -27,6 +31,28 @@ describe('loadConfig', () => {
       },
     });
     expect(config.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('reads the S3 settings and signs with the internal endpoint unless a public one is set', () => {
+    expect(loadConfig(required).s3).toEqual({
+      endpoint: 'http://minio:9000',
+      publicEndpoint: 'http://minio:9000',
+      region: 'us-east-1',
+      bucket: 'proxies',
+      accessKey: 'access',
+      secretKey: 'secret-key',
+    });
+    expect(
+      loadConfig({ ...required, S3_PUBLIC_ENDPOINT: 'http://localhost:9000', S3_REGION: 'eu-1' }).s3,
+    ).toMatchObject({
+      endpoint: 'http://minio:9000',
+      publicEndpoint: 'http://localhost:9000',
+      region: 'eu-1',
+    });
+  });
+
+  it('rejects an S3 endpoint that is not a URL', () => {
+    expect(() => loadConfig({ ...required, S3_ENDPOINT: 'minio' })).toThrow(/S3_ENDPOINT/);
   });
 
   it('treats empty variables as unset', () => {

@@ -25,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 
@@ -62,7 +63,25 @@ class AppContainer(
             newId = { UUID.randomUUID().toString() },
             now = System::currentTimeMillis,
             currentUserId = { session.user.value?.id },
-        )
+        ).also { store ->
+            // Projects from before user_id existed belong to nobody; drop them and their derived proxy files once.
+            store.purgeOwnerless().forEach { project -> project.proxyPath?.let(::deleteProxyFile) }
+        }
+    }
+
+    /** Where [ImportPipeline] writes the proxies it transcodes, one `<project id>.mp4` per project. */
+    private val proxyDir: Path = dataDir.resolve("proxies").toAbsolutePath().normalize()
+
+    /**
+     * Deletes the proxy at [proxyPath] of a purged project, but only when it lies inside [proxyDir]. The purge runs
+     * unattended at startup, so a path that points anywhere else (a hand-edited database, a proxy path that happened
+     * to be the original video) is left alone rather than risking the user's own footage.
+     */
+    private fun deleteProxyFile(proxyPath: String) {
+        runCatching {
+            val file = Path.of(proxyPath).toAbsolutePath().normalize()
+            if (file.startsWith(proxyDir)) Files.deleteIfExists(file)
+        }
     }
 
     /**
@@ -77,7 +96,7 @@ class AppContainer(
                 videoEngine = videoEngine,
                 transcoder = FfmpegProxyTranscoder(),
                 uploader = HttpProxyUploader(engine),
-                proxyDir = dataDir.resolve("proxies"),
+                proxyDir = proxyDir,
                 onAnalyzed = { project ->
                     if (navigator.current == Screen.Projects) navigator.push(Screen.Editor(project.id))
                 },

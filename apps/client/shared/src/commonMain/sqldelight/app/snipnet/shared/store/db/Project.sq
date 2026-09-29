@@ -38,6 +38,12 @@ DELETE FROM pending_video_delete WHERE user_id = ? AND remote_video_id = ?;
 selectAllForUser:
 SELECT * FROM project WHERE user_id = ? ORDER BY last_opened_ms DESC, created_at_ms DESC;
 
+selectOwnerless:
+SELECT * FROM project WHERE user_id IS NULL;
+
+deleteOwnerless:
+DELETE FROM project WHERE user_id IS NULL;
+
 selectById:
 SELECT * FROM project WHERE id = ?;
 

@@ -8,6 +8,7 @@ import { createTestSchema, type TestSchema } from './helpers/db.js';
 const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
 const COURT = { roi: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 }, netPoint: { x: 0.4, y: 0.55 } };
 const DURATION_MS = 90_000;
+const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
 
 interface JobBody {
   id: string;
@@ -40,7 +41,10 @@ describe('job routes', () => {
     } finally {
       await db.destroy();
     }
-    app = await buildApp({ config: schema.config });
+    // A public endpoint that differs from the internal one shows which of them the worker's proxy URL is signed for.
+    app = await buildApp({
+      config: { ...schema.config, s3: { ...schema.config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } },
+    });
   });
 
   afterAll(async () => {
@@ -255,6 +259,8 @@ describe('job routes', () => {
       expect(body.video).toMatchObject({ id: first.videoId, status: 'analyzing' });
 
       const url = new URL(body.proxyUrl);
+      // The worker runs next to the API, so the URL has to use the internal S3 endpoint, not the public one.
+      expect(url.origin).toBe(new URL(schema.config.s3.endpoint).origin);
       expect(url.pathname).toContain('/proxies/');
       expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
       expect(url.searchParams.get('X-Amz-Signature')).not.toBeNull();

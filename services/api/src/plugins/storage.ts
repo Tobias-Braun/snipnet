@@ -32,7 +32,10 @@ export interface PresignedUpload {
 export interface Storage {
   /** Presigned PUT for `key` that only accepts a `video/mp4` body of exactly `sizeBytes` bytes. */
   presignUpload: (key: string, sizeBytes: number) => Promise<PresignedUpload>;
-  /** Presigned GET for `key`, valid for `DOWNLOAD_URL_TTL_SECONDS`. */
+  /**
+   * Presigned GET for `key`, valid for `DOWNLOAD_URL_TTL_SECONDS`. It is meant for the inference worker, which runs
+   * next to the API, so it is signed for the internal endpoint rather than the public one.
+   */
   presignDownload: (key: string) => Promise<string>;
   /** Size of the stored object in bytes, or `null` when the key does not exist. */
   objectSize: (key: string) => Promise<number | null>;
@@ -67,8 +70,8 @@ function createClient(config: S3Config, endpoint: string): S3Client {
 
 /**
  * Creates the storage operations for a bucket. Presigning is a local computation, but the host is part of the
- * signature, so it needs a client that is configured with the public endpoint. Requests the API makes itself
- * go through a second client on the internal endpoint.
+ * signature, so URLs for the desktop client need a client that is configured with the public endpoint. Requests
+ * the API makes itself, and URLs for the worker, go through a second client on the internal endpoint.
  */
 export function createStorage(config: S3Config): Storage & { close: () => void } {
   const internal = createClient(config, config.endpoint);
@@ -97,7 +100,9 @@ export function createStorage(config: S3Config): Storage & { close: () => void }
 
     async presignDownload(key) {
       const command = new GetObjectCommand({ Bucket: config.bucket, Key: key });
-      return getSignedUrl(signer, command, { expiresIn: DOWNLOAD_URL_TTL_SECONDS });
+      // In Compose the public endpoint is `localhost` on the host, which the worker container cannot reach; the
+      // internal endpoint (`http://minio:9000`) is reachable from both the API and the worker.
+      return getSignedUrl(internal, command, { expiresIn: DOWNLOAD_URL_TTL_SECONDS });
     },
 
     async objectSize(key) {

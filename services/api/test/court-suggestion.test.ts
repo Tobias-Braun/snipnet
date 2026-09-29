@@ -315,5 +315,19 @@ describe('court suggestion', () => {
       expect((await report(videoId, SUGGESTION, 'dead-worker', 1)).statusCode).toBe(409);
       expect(await taskOf(videoId)).toMatchObject({ status: 'running', worker_id: 'worker-2' });
     });
+
+    it('rejects a failure report without an attempt and leaves the task running', async () => {
+      const { videoId } = await freshTask('worker-1');
+
+      const response = await app.inject({
+        method: 'POST',
+        url: `/internal/videos/${videoId}/court-suggestion/fail`,
+        headers: INTERNAL,
+        payload: { workerId: 'worker-1', error: 'boom', retryable: true },
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(await taskOf(videoId)).toMatchObject({ status: 'running', worker_id: 'worker-1', attempts: 1 });
+    });
   });
 });

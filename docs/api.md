@@ -96,10 +96,9 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 which is the `job.attempts` value the claim response returned. If the job is not `running`, its `worker_id` differs
 or its `attempts` differs from `attempt` (the lease expired and the job was re-claimed, by another worker or by the
 same `workerId`), the API answers `409` and changes nothing. The attempt makes the check exact even when two workers
-share a `workerId`. A missing `workerId` or `attempt` is a `400`. The court detection result and fail reports follow the same rule, with the `attempt` returned by
-`court-detection/claim`. The worker
-treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on `progress` also aborts the
-model run early. A `409` on the result can also mean the proxy changed after `upload-complete`, so the worker logs the
+share a `workerId`. A missing `workerId` or `attempt` is a `400`. The court detection result and fail reports follow
+the same rule, with the `attempt` returned by `court-detection/claim`. The worker treats the `409` as "lease lost": it
+drops the job without posting `fail`, and a `409` on `progress` also aborts the model run early. A `409` on the result can also mean the proxy changed after `upload-complete`, so the worker logs the
 message of the response's error envelope rather than assuming a reclaim.
 
 A stale court detection report must neither finish nor requeue the attempt of the worker that took the task over,

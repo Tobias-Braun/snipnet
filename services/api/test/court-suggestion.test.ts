@@ -63,9 +63,16 @@ describe('court suggestion', () => {
     return row.id;
   }
 
-  /** Drains the queue so tests that claim are not disturbed by tasks of earlier tests. */
-  async function clearTasks() {
+  /**
+   * Drains the queue so tests that claim are not disturbed by tasks of earlier tests, then queues a task for a new
+   * video, and leases it to `claimedBy` when given.
+   */
+  async function freshTask(claimedBy?: string) {
     await app.db.deleteFrom('court_detection_tasks').execute();
+    const user = await newUser();
+    const videoId = await seedVideoWithTask(user.id);
+    if (claimedBy !== undefined) await claim(claimedBy);
+    return { user, videoId };
   }
 
   async function claim(workerId = 'worker-1') {
@@ -92,23 +99,19 @@ describe('court suggestion', () => {
   }
 
   it('serves courtSuggestion as null by default', async () => {
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
+    const { user, videoId } = await freshTask();
     expect(await fetchVideo(user.auth, videoId)).toMatchObject({ court: null, courtSuggestion: null });
   });
 
   it('hands out the task with a proxy URL and stores the reported suggestion without touching the court', async () => {
-    await clearTasks();
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
+    const { user, videoId } = await freshTask();
 
     const claimed = await claim();
     expect(claimed.statusCode).toBe(200);
     expect(claimed.json<{ videoId: string; proxyUrl: string }>()).toMatchObject({ videoId });
     expect(claimed.json<{ proxyUrl: string }>().proxyUrl).toContain(`court-${String(counter)}.mp4`);
 
-    const response = await report(videoId, SUGGESTION);
-    expect(response.statusCode).toBe(204);
+    expect((await report(videoId, SUGGESTION)).statusCode).toBe(204);
 
     expect(await fetchVideo(user.auth, videoId)).toMatchObject({ court: null, courtSuggestion: SUGGESTION });
     const list = await app.inject({ method: 'GET', url: '/v1/videos', headers: user.auth });
@@ -117,11 +120,8 @@ describe('court suggestion', () => {
     );
   });
 
-  it('records "no net found" as a null suggestion and finishes the task', async () => {
-    await clearTasks();
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
-    await claim();
+  it('records "no net found" as a null suggestion and does not offer the finished task again', async () => {
+    const { user, videoId } = await freshTask('worker-1');
 
     const response = await app.inject({
       method: 'POST',
@@ -135,20 +135,8 @@ describe('court suggestion', () => {
     expect((await claim()).statusCode).toBe(204);
   });
 
-  it('does not offer a finished task again and answers 204 on an empty queue', async () => {
-    await clearTasks();
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
-    await claim();
-    await report(videoId, SUGGESTION);
-    expect((await claim()).statusCode).toBe(204);
-  });
-
   it('rejects out-of-range values with validation_error', async () => {
-    await clearTasks();
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
-    await claim();
+    const { user, videoId } = await freshTask('worker-1');
 
     const bad = [
       { ...SUGGESTION, confidence: 1.2 },
@@ -168,30 +156,23 @@ describe('court suggestion', () => {
   });
 
   it('requires the internal token', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: `/internal/videos/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}/court-suggestion`,
-      payload: SUGGESTION,
-    });
-    expect(response.statusCode).toBe(401);
-    const user = await newUser();
-    const claimResponse = await app.inject({
-      method: 'POST',
-      url: '/internal/court-detection/claim',
-      headers: user.auth,
-      payload: { workerId: 'w' },
-    });
-    expect(claimResponse.statusCode).toBe(401);
+    const { user, videoId } = await freshTask();
+    const attempts = [
+      { url: `/internal/videos/${videoId}/court-suggestion`, payload: SUGGESTION },
+      { url: '/internal/court-detection/claim', payload: { workerId: 'w' } },
+    ];
+    for (const { url, payload } of attempts) {
+      const anonymous = await app.inject({ method: 'POST', url, payload });
+      const asUser = await app.inject({ method: 'POST', url, payload, headers: user.auth });
+      expect([anonymous.statusCode, asUser.statusCode]).toEqual([401, 401]);
+    }
   });
 
   it('answers 404 for unknown videos and 409 for a task that is not running', async () => {
-    await clearTasks();
+    const { videoId } = await freshTask();
     const unknown = await report('11111111-1111-4111-8111-111111111111', SUGGESTION);
     expect(unknown.statusCode).toBe(404);
     expect((await report('not-a-uuid', SUGGESTION)).statusCode).toBe(404);
-
-    const user = await newUser();
-    const videoId = await seedVideoWithTask(user.id);
     expect((await report(videoId, SUGGESTION)).statusCode).toBe(409);
   });
 
@@ -205,47 +186,44 @@ describe('court suggestion', () => {
       });
     }
 
+    async function taskOf(videoId: string) {
+      return app.db
+        .selectFrom('court_detection_tasks')
+        .selectAll()
+        .where('video_id', '=', videoId)
+        .executeTakeFirstOrThrow();
+    }
+
     it('requeues a retryable failure until the attempts are spent', async () => {
-      await clearTasks();
-      const user = await newUser();
-      const videoId = await seedVideoWithTask(user.id);
+      const { user, videoId } = await freshTask();
 
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         expect((await claim()).statusCode).toBe(200);
         expect((await fail(videoId, true)).statusCode).toBe(204);
       }
+
       expect((await claim()).statusCode).toBe(204);
-      const task = await app.db
-        .selectFrom('court_detection_tasks')
-        .selectAll()
-        .where('video_id', '=', videoId)
-        .executeTakeFirstOrThrow();
-      expect(task).toMatchObject({ status: 'failed', attempts: 3, error: 'boom' });
+      expect(await taskOf(videoId)).toMatchObject({ status: 'failed', attempts: 3, error: 'boom' });
       expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: null });
     });
 
     it('fails a non-retryable error for good and leaves the video usable', async () => {
-      await clearTasks();
-      const user = await newUser();
-      const videoId = await seedVideoWithTask(user.id);
-      await claim();
+      const { videoId } = await freshTask('worker-1');
 
       expect((await fail(videoId, false)).statusCode).toBe(204);
 
       expect((await claim()).statusCode).toBe(204);
+      expect(await taskOf(videoId)).toMatchObject({ status: 'failed', attempts: 1 });
       const video = await app.db
         .selectFrom('videos')
-        .selectAll()
+        .select('status')
         .where('id', '=', videoId)
         .executeTakeFirstOrThrow();
       expect(video.status).toBe('uploaded');
     });
 
     it('re-leases a running task whose lease expired', async () => {
-      await clearTasks();
-      const user = await newUser();
-      const videoId = await seedVideoWithTask(user.id);
-      await claim('dead-worker');
+      const { videoId } = await freshTask('dead-worker');
       await app.db
         .updateTable('court_detection_tasks')
         .set({ lease_expires_at: new Date(Date.now() - 1000) })

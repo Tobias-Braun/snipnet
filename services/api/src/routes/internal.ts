@@ -1,5 +1,5 @@
 import type { FastifyPluginCallbackTypebox } from '@fastify/type-provider-typebox';
-import { sql, type Selectable, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Selectable, type Transaction } from 'kysely';
 import Type from 'typebox';
 
 import type { Database, JobsTable, VideosTable } from '../db/types.js';
@@ -49,6 +49,18 @@ const ResultBody = Type.Object(
 );
 
 type Tx = Transaction<Database>;
+
+/**
+ * Rows a worker may claim, shared by jobs and court detection tasks: queued ones, and running ones whose worker
+ * stopped reporting so that their lease expired.
+ */
+function isClaimable<T extends 'jobs' | 'court_detection_tasks'>(eb: ExpressionBuilder<Database, T>) {
+  const row = eb as unknown as ExpressionBuilder<Database, 'jobs'>;
+  return row.or([
+    row('status', '=', 'queued'),
+    row.and([row('status', '=', 'running'), row('lease_expires_at', '<', sql<Date>`now()`)]),
+  ]);
+}
 
 /** Worker endpoints under `/internal/jobs/*`, guarded by `INTERNAL_TOKEN` instead of a user token. */
 export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: string }> = (
@@ -117,12 +129,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         const candidate = await trx
           .selectFrom('jobs')
           .selectAll()
-          .where((eb) =>
-            eb.or([
-              eb('status', '=', 'queued'),
-              eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<', sql<Date>`now()`)]),
-            ]),
-          )
+          .where(isClaimable)
           .orderBy('created_at')
           .orderBy('id')
           .limit(1)
@@ -332,12 +339,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         const candidate = await trx
           .selectFrom('court_detection_tasks')
           .selectAll()
-          .where((eb) =>
-            eb.or([
-              eb('status', '=', 'queued'),
-              eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<', sql<Date>`now()`)]),
-            ]),
-          )
+          .where(isClaimable)
           .orderBy('created_at')
           .orderBy('video_id')
           .limit(1)

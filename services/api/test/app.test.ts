@@ -204,5 +204,26 @@ describe('API application', () => {
         expect.objectContaining({ route: 'post /v1/waitlist', status: '400' }),
       );
     });
+
+    it('documents a 400 validation_error on every operation that validates a request body', async () => {
+      const response = await (await newApp()).inject({ method: 'GET', url: '/v1/openapi.json' });
+      type Operation = { requestBody?: unknown; responses?: Record<string, unknown> };
+      const document = response.json<{ paths: Record<string, Record<string, Operation>> }>();
+
+      const withBody: string[] = [];
+      const missing400: string[] = [];
+      for (const [path, operations] of Object.entries(document.paths)) {
+        // The echo route registered by this file's `newApp` is a test fixture, not part of the API.
+        if (path.startsWith('/v1/test/')) continue;
+        for (const [method, operation] of Object.entries(operations)) {
+          if (operation.requestBody === undefined) continue;
+          withBody.push(`${method} ${path}`);
+          if (operation.responses?.['400'] === undefined) missing400.push(`${method} ${path}`);
+        }
+      }
+
+      expect(withBody).toContain('post /v1/auth/login');
+      expect(missing400).toEqual([]);
+    });
   });
 });

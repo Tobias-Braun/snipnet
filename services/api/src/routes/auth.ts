@@ -121,6 +121,7 @@ export const authRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =>
         body: Credentials,
         response: {
           200: AuthResponse,
+          400: Type.Ref('ErrorResponse'),
           401: Type.Ref('ErrorResponse'),
           429: Type.Ref('ErrorResponse'),
         },

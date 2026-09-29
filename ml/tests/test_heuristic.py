@@ -15,7 +15,8 @@ from snipnet_ml.predict import main as predict_main
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
 
-SEEDS = (1, 2, 3, 4)
+# Seed 7 is the one the end-to-end test in infra/e2e renders, so its accuracy is checked here without a stack.
+SEEDS = (1, 2, 3, 4, 7)
 
 
 def to_rallies(prediction: Prediction) -> list[Rally]:
@@ -45,7 +46,8 @@ def test_synthetic_fixtures_meet_quality_targets(clips, seed: int) -> None:
     metrics = evaluate(to_rallies(prediction), labels.rallies, labels.duration_ms)
     assert metrics.f1 >= 0.9, metrics
     assert metrics.boundary_mae_ms is not None
-    assert metrics.boundary_mae_ms <= 1500, metrics
+    assert metrics.boundary_mae_ms <= 900, metrics
+    assert metrics.frame_accuracy >= 0.85, metrics
 
 
 @needs_ffmpeg
@@ -123,12 +125,13 @@ def test_segment_cleanup_merges_gaps_drops_short_rallies_and_clamps() -> None:
 
     segments = build_segments(states, probability, 0.5, 30.0, params)
 
-    assert [(s.start_ms, s.end_ms) for s in segments] == [(0, 11_500), (24_000, 30_000)]
+    assert [(s.start_ms, s.end_ms) for s in segments] == [(0, 10_500), (24_500, 30_000)]
     assert segments[0].confidence == pytest.approx(17 / 20)
 
 
 def test_padding_that_makes_rallies_touch_merges_them() -> None:
-    params = HeuristicParams(min_gap_s=0.0)
+    # Explicit padding: the gap of 1 s between the runs must be smaller than the two paddings together.
+    params = HeuristicParams(min_gap_s=0.0, pad_before_s=1.0, pad_after_s=1.5)
     states = np.zeros(40, dtype=np.int8)
     states[4:12] = 1
     states[14:22] = 1

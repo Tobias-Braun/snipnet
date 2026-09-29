@@ -94,7 +94,11 @@ def test_upload_analyze_and_correct(tmp_path: Path) -> None:
         print(format_table(metrics))
         assert metrics.recall >= 0.6, metrics
         assert metrics.precision >= 0.6, metrics
-        assert metrics.frame_accuracy >= 0.7, metrics
+        assert metrics.frame_accuracy >= 0.85, metrics
+        # Padding and window quantization keep the boundaries about half a second off; more than a second
+        # means the heuristic places rally starts or ends badly.
+        assert metrics.boundary_mae_ms is not None
+        assert metrics.boundary_mae_ms <= 1000, metrics
 
         final = _check(
             api.post(

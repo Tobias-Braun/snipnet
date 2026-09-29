@@ -3,6 +3,7 @@ import type { FastifyPluginCallback } from 'fastify';
 import { authRoutes } from './auth.js';
 import { healthRoutes } from './health.js';
 import { jobRoutes } from './jobs.js';
+import { segmentSetRoutes } from './segment-sets.js';
 import { videoRoutes } from './videos.js';
 import { waitlistRoutes, type WaitlistRouteOptions } from './waitlist.js';
 
@@ -19,6 +20,7 @@ export const v1Routes: FastifyPluginCallback<{ version: string } & WaitlistRoute
   void app.register(authRoutes);
   void app.register(videoRoutes);
   void app.register(jobRoutes);
+  void app.register(segmentSetRoutes);
   void app.register(waitlistRoutes, { waitlistRateLimit: options.waitlistRateLimit });
   done();
 };

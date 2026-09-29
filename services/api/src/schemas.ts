@@ -82,3 +82,34 @@ export const Video = Type.Object(
   },
   { $id: 'Video' },
 );
+
+const SegmentOut = Type.Object({
+  startMs: Type.Integer(),
+  endMs: Type.Integer(),
+  label: Type.Literal('rally'),
+  confidence: Type.Union([Type.Number(), Type.Null()]),
+});
+
+const EditOpOut = Type.Object({
+  op: Type.String(),
+  atMs: Type.Number(),
+  before: Type.Array(SegmentOut),
+  after: Type.Array(SegmentOut),
+});
+
+export const SegmentSet = Type.Object(
+  {
+    id: Type.String({ format: 'uuid' }),
+    videoId: Type.String({ format: 'uuid' }),
+    kind: Type.Union([Type.Literal('prediction'), Type.Literal('user')]),
+    parentSetId: Type.Union([Type.String({ format: 'uuid' }), Type.Null()]),
+    jobId: Type.Union([Type.String({ format: 'uuid' }), Type.Null()]),
+    modelVersion: Type.Union([Type.String(), Type.Null()]),
+    segments: Type.Array(SegmentOut),
+    scores: Type.Union([Type.Object({ hz: Type.Number(), values: Type.Array(Type.Number()) }), Type.Null()]),
+    editLog: Type.Union([Type.Array(EditOpOut), Type.Null()]),
+    isFinal: Type.Boolean(),
+    createdAt: Timestamp,
+  },
+  { $id: 'SegmentSet' },
+);

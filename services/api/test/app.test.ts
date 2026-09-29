@@ -167,5 +167,42 @@ describe('API application', () => {
       expect(document.paths).toHaveProperty(['/v1/health', 'get']);
       expect(document.paths).not.toHaveProperty('/v1/openapi.json');
     });
+
+    it('documents every error response with the shared ErrorResponse schema', async () => {
+      const response = await (await newApp()).inject({ method: 'GET', url: '/v1/openapi.json' });
+      type Operation = { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> };
+      const document = response.json<{
+        paths: Record<string, Record<string, Operation>>;
+        components: { schemas: Record<string, unknown> };
+      }>();
+
+      expect(document.components.schemas).toHaveProperty('ErrorResponse');
+
+      const errorResponses: { route: string; status: string; schema: unknown }[] = [];
+      for (const [path, operations] of Object.entries(document.paths)) {
+        for (const [method, operation] of Object.entries(operations)) {
+          for (const [status, described] of Object.entries(operation.responses ?? {})) {
+            if (Number(status) >= 400) {
+              errorResponses.push({
+                route: `${method} ${path}`,
+                status,
+                schema: described.content?.['application/json']?.schema,
+              });
+            }
+          }
+        }
+      }
+
+      expect(errorResponses.length).toBeGreaterThan(0);
+      for (const { schema } of errorResponses) {
+        expect(schema).toEqual({ $ref: '#/components/schemas/ErrorResponse' });
+      }
+      expect(errorResponses).toContainEqual(
+        expect.objectContaining({ route: 'post /v1/auth/register', status: '409' }),
+      );
+      expect(errorResponses).toContainEqual(
+        expect.objectContaining({ route: 'post /v1/waitlist', status: '400' }),
+      );
+    });
   });
 });

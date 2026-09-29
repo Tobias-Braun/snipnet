@@ -96,6 +96,14 @@ services:
     env_file: .env
     environment:
       API_URL: http://api:3000
+      # Inside the container the trained model is always at /models (mounted below), whatever MODEL_HOST_DIR is.
+      MODEL_DIR: /models
+    volumes:
+      # Trained models are deployed by copying a learned-v1.<n> directory into MODEL_HOST_DIR; they are never
+      # baked into the image or committed. Read-only, and only read when MODEL=learned.
+      - ${MODEL_HOST_DIR:-./models}:/models:ro
+      # Cache for the ImageNet mobilenet weights the visual embedder downloads on first use (see the worker Dockerfile).
+      - model-cache:/cache/models
     restart: unless-stopped
     # On SIGTERM the worker finishes its current job first; Compose's default of 10 s would SIGKILL it mid-job
     # and leave the job to the 10 minute lease timeout.
@@ -112,3 +120,4 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  model-cache:

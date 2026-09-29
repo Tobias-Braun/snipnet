@@ -53,6 +53,21 @@ with the same settings, load the file first: `set -a; . infra/.env; set +a`. The
 are part of the compose file too; `docker compose -f infra/docker-compose.yml up -d --build api` (re)builds and
 starts only the API with its dependencies.
 
+### Deploying a trained model to the worker
+
+The worker serves `MODEL=learned` from a model directory that is mounted read-only at `/models` (compose sets
+`MODEL_DIR=/models`). Weights are never committed or baked into the image. To deploy a model:
+
+1. Check that it beats the heuristic: `python -m snipnet_ml.promote <dataset> <models>/learned-v1.<n> --out report`
+   exits 0 only when the model is promoted, so a script can gate the copy on it.
+2. Copy the `learned-v1.<n>` directory into the host directory `MODEL_HOST_DIR` (default `infra/models/`). The
+   newest build in that folder wins.
+3. Set `MODEL=learned` in `infra/.env` and run `docker compose -f infra/docker-compose.yml up -d worker`. The worker
+   loads the model at startup, so restarting it is what picks up a new build.
+
+The ImageNet backbone weights the embedder needs are downloaded on the first job into the `model-cache` volume
+(`SNIPNET_MODEL_CACHE=/cache/models`), so the first learned run needs network access and later runs and rebuilds do not.
+
 ## API (`services/api`)
 
 Fastify + TypeScript, Postgres through Kysely, tested with Vitest. The configuration is read from the

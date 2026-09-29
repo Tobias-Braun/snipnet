@@ -656,15 +656,16 @@ describe('video routes', () => {
       }
 
       expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: { code: 'conflict' } });
       const jobs = await app.db.selectFrom('jobs').select('id').where('video_id', '=', video.id).execute();
       expect(jobs).toHaveLength(1);
     });
 
-    it.each(['running'] as const)('answers 409 and keeps everything while a job is %s', async (status) => {
+    it('answers 409 and keeps everything while a job is running', async () => {
       const user = await newUser();
       const { video, upload } = await createVideo(user.auth, 8);
       await uploadProxy(upload, new Uint8Array(8));
-      await app.db.insertInto('jobs').values({ video_id: video.id, status }).execute();
+      await app.db.insertInto('jobs').values({ video_id: video.id, status: 'running' }).execute();
       const key = `proxies/${user.id}/${video.id}.mp4`;
 
       const response = await app.inject({

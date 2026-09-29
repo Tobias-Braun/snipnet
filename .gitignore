@@ -34,3 +34,6 @@ local.properties
 .claude/worktrees
 # Trained models deployed to the inference worker (default MODEL_HOST_DIR); weights never go in git.
 infra/models/
+.lighthouseci/
+test-results/
+playwright-report/

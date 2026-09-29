@@ -10,7 +10,10 @@
     "lint": "eslint . && prettier --check . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore",
     "format": "prettier --write . --ignore-path ../../.gitignore --ignore-path ../../.prettierignore",
     "typecheck": "tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "sh scripts/update-e2e-snapshots.sh",
+    "lighthouse": "lhci autorun"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
@@ -21,6 +24,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "1.63.0",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",

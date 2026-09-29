@@ -17,7 +17,7 @@ def test_from_env_applies_defaults() -> None:
         internal_token="secret",
         worker_id="worker-1",
         poll_interval_s=2.0,
-        model="dummy-v0",
+        model="heuristic",
     )
 
 

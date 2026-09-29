@@ -1,0 +1,211 @@
+import json
+import shutil
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from snipnet_ml import HeuristicModel, HeuristicParams, InvalidInputError, fixtures, load_model
+from snipnet_ml.eval import evaluate
+from snipnet_ml.features import FeatureFrame
+from snipnet_ml.heuristic import build_segments, predict_from_features, viterbi_states
+from snipnet_ml.labels import Labels, Rally, save_labels
+from snipnet_ml.model import Court, DummyModel, Point, Prediction, Roi
+from snipnet_ml.predict import main as predict_main
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+
+SEEDS = (1, 2, 3, 4)
+
+
+def to_rallies(prediction: Prediction) -> list[Rally]:
+    return [Rally(start_ms=s.start_ms, end_ms=s.end_ms) for s in prediction.segments]
+
+
+def model_court(labels: Labels) -> Court:
+    roi, net = labels.court.roi, labels.court.net_point
+    return Court(roi=Roi(roi.x, roi.y, roi.width, roi.height), net_point=Point(net.x, net.y))
+
+
+@pytest.fixture(scope="module")
+def clips(tmp_path_factory) -> dict[int, tuple[Path, Labels]]:
+    directory = tmp_path_factory.mktemp("heuristic")
+    result = {}
+    for seed in SEEDS:
+        video = directory / f"clip{seed}.mp4"
+        result[seed] = (video, fixtures.generate_video(video, duration_s=60, seed=seed))
+    return result
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("seed", SEEDS)
+def test_synthetic_fixtures_meet_quality_targets(clips, seed: int) -> None:
+    video, labels = clips[seed]
+    prediction = HeuristicModel().predict(video, model_court(labels), lambda _: None)
+
+    metrics = evaluate(to_rallies(prediction), labels.rallies, labels.duration_ms)
+    assert metrics.f1 >= 0.9, metrics
+    assert metrics.boundary_mae_ms is not None
+    assert metrics.boundary_mae_ms <= 1500, metrics
+
+
+@needs_ffmpeg
+def test_prediction_shape_and_contract_invariants(clips) -> None:
+    video, labels = clips[1]
+    progress: list[float] = []
+    prediction = HeuristicModel().predict(video, model_court(labels), progress.append)
+    params = HeuristicParams()
+
+    assert prediction.model_version == "heuristic-v0.1"
+    assert progress[0] == 0.0
+    assert progress[-1] == 1.0
+    assert progress == sorted(progress)
+    assert prediction.scores is not None
+    assert prediction.scores.hz == 2.0
+    assert len(prediction.scores.values) == 120
+    assert all(0.0 <= v <= 1.0 for v in prediction.scores.values)
+
+    previous_end = -1
+    for segment in prediction.segments:
+        assert 0 <= segment.start_ms < segment.end_ms <= labels.duration_ms
+        # Padding is applied around detected rallies, so what remains is at least the minimum rally plus padding
+        # unless it is clamped at the video edges.
+        assert segment.end_ms - segment.start_ms >= params.min_rally_s * 1000
+        assert segment.start_ms > previous_end
+        assert segment.confidence is not None
+        assert 0.0 <= segment.confidence <= 1.0
+        previous_end = segment.end_ms
+
+
+@needs_ffmpeg
+def test_works_without_a_court(clips) -> None:
+    video, _ = clips[1]
+    prediction = HeuristicModel().predict(video, None, lambda _: None)
+    assert prediction.scores is not None
+
+
+@needs_ffmpeg
+def test_footage_without_rallies_yields_no_segments(tmp_path: Path) -> None:
+    import subprocess
+
+    video = tmp_path / "quiet.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=160x90:r=10:d=30", "-f", "lavfi", "-i",
+         "anoisesrc=amplitude=0.002:d=30", "-shortest", "-pix_fmt", "yuv420p", str(video)],
+        check=True,
+    )  # fmt: skip
+    assert HeuristicModel().predict(video, None, lambda _: None).segments == []
+
+
+@needs_ffmpeg
+def test_unreadable_media_is_invalid_input(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"not a video")
+    with pytest.raises(InvalidInputError):
+        HeuristicModel().predict(broken, None, lambda _: None)
+
+
+def test_viterbi_removes_single_window_flicker() -> None:
+    params = HeuristicParams()
+    probability = np.array([0.05] * 10 + [0.95] + [0.05] * 10 + [0.9] * 10 + [0.05] * 5)
+    states = viterbi_states(probability, params)
+    assert states[:21].sum() == 0
+    assert states[21:31].all()
+
+
+def test_segment_cleanup_merges_gaps_drops_short_rallies_and_clamps() -> None:
+    params = HeuristicParams()
+    states = np.zeros(60, dtype=np.int8)
+    states[0:6] = 1  # 3 s rally at the very start
+    states[9:20] = 1  # 1.5 s gap to the previous run is bridged
+    states[30:32] = 1  # 1 s blip is too short
+    states[50:60] = 1  # touches the end of the video
+    probability = states.astype(float)
+
+    segments = build_segments(states, probability, 0.5, 30.0, params)
+
+    assert [(s.start_ms, s.end_ms) for s in segments] == [(0, 11_500), (24_000, 30_000)]
+    assert segments[0].confidence == pytest.approx(17 / 20)
+
+
+def test_padding_that_makes_rallies_touch_merges_them() -> None:
+    params = HeuristicParams(min_gap_s=0.0)
+    states = np.zeros(40, dtype=np.int8)
+    states[4:12] = 1
+    states[14:22] = 1
+    segments = build_segments(states, states.astype(float), 0.5, 20.0, params)
+    assert [(s.start_ms, s.end_ms) for s in segments] == [(1000, 12_500)]
+
+
+def test_predict_from_features_on_a_hand_made_table() -> None:
+    n = 60
+    starts = np.arange(n) * 0.5
+    active = (starts >= 10) & (starts < 20)
+    table = FeatureFrame.from_arrays(
+        t_start=starts,
+        t_end=starts + 0.5,
+        roi_motion=np.where(active, 4.0, 0.1),
+        outside_motion=np.full(n, 1.0),
+        onset_mean=np.where(active, 0.6, 0.02),
+        onset_max=np.where(active, 20.0, 1.0),
+        transient_count=np.where(active, 1, 0),
+    )
+    prediction = predict_from_features(table, 30_000, HeuristicParams())
+    assert len(prediction.segments) == 1
+    segment = prediction.segments[0]
+    assert abs(segment.start_ms - 9000) <= 1500
+    assert abs(segment.end_ms - 21_500) <= 1500
+
+
+def test_params_yaml_overrides_only_named_values(tmp_path: Path) -> None:
+    path = tmp_path / "params.yaml"
+    path.write_text("min_rally_s: 4.0\npad_after_s: 0\n", encoding="utf-8")
+    params = HeuristicParams.from_yaml(path)
+    assert params.min_rally_s == 4.0
+    assert params.pad_after_s == 0
+    assert params.min_gap_s == HeuristicParams().min_gap_s
+
+
+def test_params_yaml_rejects_unknown_and_invalid_values(tmp_path: Path) -> None:
+    path = tmp_path / "params.yaml"
+    path.write_text("min_rally: 4.0\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="min_rally"):
+        HeuristicParams.from_yaml(path)
+    path.write_text("switch_probability: 0.9\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="switch_probability"):
+        HeuristicParams.from_yaml(path)
+    path.write_text("- 1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        HeuristicParams.from_yaml(path)
+
+
+def test_load_model_selects_heuristic_and_dummy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("HEURISTIC_PARAMS", raising=False)
+    assert isinstance(load_model("dummy"), DummyModel)
+    assert isinstance(load_model("dummy-v0"), DummyModel)
+    model = load_model("heuristic")
+    assert isinstance(model, HeuristicModel)
+    assert model.params == HeuristicParams()
+
+    path = tmp_path / "params.yaml"
+    path.write_text("min_rally_s: 5\n", encoding="utf-8")
+    monkeypatch.setenv("HEURISTIC_PARAMS", str(path))
+    loaded = load_model("heuristic-v0.1")
+    assert isinstance(loaded, HeuristicModel)
+    assert loaded.params.min_rally_s == 5
+
+
+@needs_ffmpeg
+def test_predict_cli_prints_segments_and_metrics(clips, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    video, labels = clips[2]
+    labels_path = tmp_path / "labels.json"
+    save_labels(labels, labels_path)
+    court_path = tmp_path / "court.json"
+    court_path.write_text(json.dumps(labels.court.model_dump(by_alias=True)), encoding="utf-8")
+
+    predict_main([str(video), "--court", str(court_path), "--eval", str(labels_path)])
+
+    output = capsys.readouterr().out
+    assert "heuristic-v0.1" in output
+    assert " s - " in output
+    assert "segment F1" in output

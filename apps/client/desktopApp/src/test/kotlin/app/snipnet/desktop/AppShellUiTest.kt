@@ -21,6 +21,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -50,13 +51,14 @@ class AppShellUiTest {
     @Test
     fun clicksThroughLoginProjectsCourtSelectionAndEditor() =
         runDesktopComposeUiTest {
-            var videoStatus = "uploaded"
+            // Set by the test thread and read on the mock engine's request thread, hence atomic.
+            val videoStatus = AtomicReference("uploaded")
             val http =
                 MockEngine { request ->
                     val body =
                         when (request.url.encodedPath) {
                             "/v1/auth/login" -> """{"token":"jwt-1","user":$user}"""
-                            "/v1/videos" -> """{"items":[${video(videoStatus)}]}"""
+                            "/v1/videos" -> """{"items":[${video(videoStatus.get())}]}"""
                             "/v1/videos/remote-1/segment-sets" -> """{"items":[]}"""
                             else -> null
                         }
@@ -96,12 +98,13 @@ class AppShellUiTest {
             onNodeWithText("Back").performClick()
             awaitText("Projects")
 
-            videoStatus = "analyzed"
+            videoStatus.set("analyzed")
             onNodeWithText("Refresh").performClick()
             awaitText("Open")
             onNodeWithText("Open").performClick()
             waitUntilExactlyOneExists(hasTestTag("editor"), timeoutMillis = SCREEN_TIMEOUT_MS)
             awaitText("Export")
+            assertEquals(Screen.Editor(project.id), container.navigator.current)
 
             onNodeWithText("Back").performClick()
             awaitText("Projects")

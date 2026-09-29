@@ -381,8 +381,12 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     });
   }
 
-  /** Locks the video's detection task and requires it to be running, so a late report cannot resurrect a task. */
-  async function lockRunningCourtTask(trx: Tx, videoId: string): Promise<void> {
+  /**
+   * Locks the video's detection task and requires it to be running, so a late report cannot resurrect a task. With
+   * `workerId` the task must also still be leased to that worker: a failure report from a worker whose lease expired
+   * would otherwise requeue the attempt of the worker that took the task over.
+   */
+  async function lockRunningCourtTask(trx: Tx, videoId: string, workerId?: string): Promise<void> {
     if (!UUID_PATTERN.test(videoId)) throw new AppError('not_found', 'Video not found');
     const task = await trx
       .selectFrom('court_detection_tasks')
@@ -393,6 +397,12 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     if (task === undefined) throw new AppError('not_found', 'Court detection task not found');
     if (task.status !== 'running') {
       throw new AppError('conflict', `Court detection task is ${task.status}, not running`);
+    }
+    if (workerId !== undefined && task.worker_id !== workerId) {
+      throw new AppError(
+        'conflict',
+        'Court detection task is held by another worker, its lease was taken over',
+      );
     }
   }
 
@@ -466,16 +476,16 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         security,
         params: JobParams,
         body: Type.Object(
-          { error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
+          { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
           { additionalProperties: false },
         ),
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
       },
     },
     async (request, reply) => {
-      const { error: message, retryable } = request.body;
+      const { workerId, error: message, retryable } = request.body;
       await app.db.transaction().execute(async (trx) => {
-        await lockRunningCourtTask(trx, request.params.id);
+        await lockRunningCourtTask(trx, request.params.id, workerId);
         const task = await trx
           .selectFrom('court_detection_tasks')
           .select('attempts')

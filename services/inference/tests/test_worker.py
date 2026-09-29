@@ -254,7 +254,25 @@ def test_court_detection_invalid_input_is_not_retryable(api: respx.MockRouter, m
     assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
 
     assert post.call_count == 0
-    assert json.loads(fail.calls[0].request.content) == {"error": "cannot read video", "retryable": False}
+    assert json.loads(fail.calls[0].request.content) == {
+        "workerId": "w1",
+        "error": "cannot read video",
+        "retryable": False,
+    }
+
+
+def test_court_detection_result_rejected_with_409_does_not_post_fail(
+    api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api.post(f"{API}/internal/court-detection/claim").respond(200, json=COURT_CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    api.post(SUGGESTION_URL).respond(409, json={"error": {"code": "conflict", "message": "not running"}})
+    fail = api.post(f"{SUGGESTION_URL}/fail").respond(204)
+    stub_detection(monkeypatch, CourtSuggestion(court=COURT, confidence=0.83))
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
+
+    assert fail.call_count == 0
 
 
 def test_court_detection_other_errors_are_retryable(api: respx.MockRouter, monkeypatch: pytest.MonkeyPatch) -> None:

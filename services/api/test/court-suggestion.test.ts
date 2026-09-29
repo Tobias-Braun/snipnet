@@ -177,12 +177,12 @@ describe('court suggestion', () => {
   });
 
   describe('failures', () => {
-    async function fail(videoId: string, retryable: boolean) {
+    async function fail(videoId: string, retryable: boolean, workerId = 'worker-1') {
       return app.inject({
         method: 'POST',
         url: `/internal/videos/${videoId}/court-suggestion/fail`,
         headers: INTERNAL,
-        payload: { error: 'boom', retryable },
+        payload: { workerId, error: 'boom', retryable },
       });
     }
 
@@ -233,6 +233,21 @@ describe('court suggestion', () => {
       const claimed = await claim('worker-2');
       expect(claimed.statusCode).toBe(200);
       expect(claimed.json<{ videoId: string }>().videoId).toBe(videoId);
+    });
+
+    it('rejects a failure report from a worker whose lease was taken over', async () => {
+      const { videoId } = await freshTask('dead-worker');
+      await app.db
+        .updateTable('court_detection_tasks')
+        .set({ lease_expires_at: new Date(Date.now() - 1000) })
+        .where('video_id', '=', videoId)
+        .execute();
+      expect((await claim('worker-2')).statusCode).toBe(200);
+
+      const stale = await fail(videoId, true, 'dead-worker');
+
+      expect(stale.statusCode).toBe(409);
+      expect(await taskOf(videoId)).toMatchObject({ status: 'running', worker_id: 'worker-2', attempts: 2 });
     });
   });
 });

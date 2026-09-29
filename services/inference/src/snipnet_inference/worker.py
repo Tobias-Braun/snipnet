@@ -127,12 +127,17 @@ class Worker:
             # A JSON `null` body reports that the detection ran and found no net.
             self._post_url(base, court_suggestion_body(suggestion))
             log.info("court detection for video %s done", video_id)
+        except LeaseLostError:
+            # The task finished elsewhere or another worker owns it now; a failure report would be wrong, so drop it.
+            log.warning("court detection for video %s was taken over by another worker, dropping it", video_id)
         except Exception as exc:
             log.exception("court detection for video %s failed", video_id)
             retryable = not isinstance(exc, InvalidInputError)
             error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
             try:
-                self._post_url(f"{base}/fail", {"error": error, "retryable": retryable})
+                self._post_url(
+                    f"{base}/fail", {"workerId": self._settings.worker_id, "error": error, "retryable": retryable}
+                )
             except (LeaseLostError, httpx.HTTPError) as post_exc:
                 # The lease expires and the task is claimed again, or the video is gone.
                 log.warning("could not report failure of court detection for video %s: %s", video_id, post_exc)

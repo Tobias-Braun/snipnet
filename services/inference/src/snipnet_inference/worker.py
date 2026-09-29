@@ -109,7 +109,7 @@ class Worker:
                 prediction = self._model.predict(
                     proxy_path, parse_court(video.get("court")), self._progress_reporter(job_id)
                 )
-            self._post(job_id, "result", prediction_body(prediction))
+            self._post(job_id, "result", {"workerId": self._settings.worker_id, **prediction_body(prediction)})
             log.info("job %s succeeded", job_id)
         except Exception as exc:
             log.exception("job %s failed", job_id)
@@ -139,7 +139,9 @@ class Worker:
                 return
             last_sent = now
             try:
-                self._post(job_id, "progress", {"progress": min(1.0, max(0.0, fraction))})
+                self._post(
+                    job_id, "progress", {"workerId": self._settings.worker_id, "progress": min(1.0, max(0.0, fraction))}
+                )
             except httpx.HTTPError as exc:
                 # A lost progress update only delays the lease extension; it must not abort the analysis.
                 log.warning("progress update for job %s failed: %s", job_id, exc)
@@ -150,7 +152,7 @@ class Worker:
         retryable = not isinstance(exc, InvalidInputError)
         try:
             error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
-            self._post(job_id, "fail", {"error": error, "retryable": retryable})
+            self._post(job_id, "fail", {"workerId": self._settings.worker_id, "error": error, "retryable": retryable})
         except httpx.HTTPError as post_exc:
             # If even the failure report is lost, the lease expires and the job is claimed again.
             log.warning("could not report failure of job %s: %s", job_id, post_exc)

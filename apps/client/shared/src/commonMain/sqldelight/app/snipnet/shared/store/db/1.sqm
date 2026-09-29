@@ -1,0 +1,5 @@
+-- Version 2: the sync state of the editor. base_set_id is the segment set the current edits started from, the edit
+-- log holds the operations since that set, and pending_save_json is a save that could not reach the server yet.
+ALTER TABLE project ADD COLUMN base_set_id TEXT;
+ALTER TABLE project ADD COLUMN draft_edit_log_json TEXT;
+ALTER TABLE project ADD COLUMN pending_save_json TEXT;

@@ -28,6 +28,7 @@ fun App(container: AppContainer) {
     var restoring by remember { mutableStateOf(true) }
 
     LaunchedEffect(container) {
+        container.startBackgroundWork()
         if (container.session.restore()) navigator.resetTo(Screen.Projects)
         restoring = false
     }

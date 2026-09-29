@@ -52,8 +52,13 @@ class EditorCommandTest {
 
     @Test
     fun otherShortcutsWithCtrlAreLeftAlone() {
-        assertNull(press(Key.S, shortcut = true))
         assertNull(press(Key.A, shortcut = true))
+        assertNull(press(Key.S, shortcut = true, shift = true))
+    }
+
+    @Test
+    fun ctrlSSavesInsteadOfSplitting() {
+        assertEquals(EditorCommand.Save, press(Key.S, shortcut = true))
     }
 
     @Test

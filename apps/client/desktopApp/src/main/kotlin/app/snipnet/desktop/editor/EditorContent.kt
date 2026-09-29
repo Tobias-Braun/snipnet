@@ -172,8 +172,38 @@ private fun TransportBar(
             onClick = holder::openExport,
             modifier = Modifier.keepEditorFocus().testTag("export-button"),
         ) { Text("Export") }
+        Text(
+            syncLabel(state),
+            style = MaterialTheme.typography.labelMedium,
+            color =
+                if (state.syncError !=
+                    null
+                ) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            modifier = Modifier.padding(start = 12.dp).testTag("sync-status"),
+        )
+        CommandButton("Save", EditorCommand.Save, holder, enabled = !state.saving && state.hasUnsavedChanges)
+        TextButton(
+            onClick = { holder.save(markFinal = true) },
+            enabled = !state.saving,
+            modifier = Modifier.keepEditorFocus().testTag("mark-final"),
+        ) { Text("Mark as final") }
     }
 }
+
+/** The one-line save state: what the server is missing, or that everything is safe. */
+internal fun syncLabel(state: EditorState): String =
+    when {
+        state.saving -> "Saving..."
+        state.syncError != null -> "Save failed: ${state.syncError}"
+        state.queued -> "Offline, save queued"
+        state.hasUnsavedChanges -> "Unsaved changes"
+        state.savedFinal -> "Saved as final"
+        else -> "All changes saved"
+    }
 
 @Composable
 private fun CommandButton(

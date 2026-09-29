@@ -53,6 +53,11 @@ class Session(
         password: String,
     ) = adopt(api.register(email, password))
 
+    /** Stores the training consent on the server (`PATCH /v1/me`) and adopts the user it returns. */
+    suspend fun setTrainingConsent(consent: Boolean) {
+        mutableUser.value = api.updateMe(consent)
+    }
+
     fun logout() {
         discardToken()
         mutableUser.value = null

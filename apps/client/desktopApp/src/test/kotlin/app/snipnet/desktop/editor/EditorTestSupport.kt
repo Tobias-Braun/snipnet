@@ -6,10 +6,12 @@ import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.video.VideoInfo
 import app.snipnet.desktop.video.VideoPlayer
 import app.snipnet.desktop.video.Waveform
+import app.snipnet.shared.api.ApiError
 import app.snipnet.shared.model.ScoreCurve
 import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SegmentSet
 import app.snipnet.shared.model.SegmentSetKind
+import app.snipnet.shared.store.PendingSave
 import app.snipnet.shared.store.ProjectStore
 import app.snipnet.shared.store.openInMemoryDatabase
 import kotlinx.coroutines.flow.Flow
@@ -77,6 +79,43 @@ class FakeEngine(
 }
 
 fun newStore(): ProjectStore = ProjectStore(openInMemoryDatabase(), newId = { "p1" }, now = { 1L })
+
+/**
+ * Stands in for `POST /v1/videos/:id/segment-sets`: records accepted saves and answers them with a user set whose id
+ * is `user-<n>`. Set [failure] to make every upload throw it, like an unreachable or refusing server. [sets] is what
+ * `GET /v1/videos/:id/segment-sets` returns to the queue when it has to look up a missing parent.
+ */
+class FakeSegmentSetServer {
+    val uploads = mutableListOf<Pair<String, PendingSave>>()
+    var failure: ApiError? = null
+    var sets: List<SegmentSet> = emptyList()
+
+    suspend fun upload(
+        remoteVideoId: String,
+        save: PendingSave,
+    ): SegmentSet {
+        failure?.let { throw it }
+        uploads += remoteVideoId to save
+        return SegmentSet(
+            id = "user-${uploads.size}",
+            videoId = remoteVideoId,
+            kind = SegmentSetKind.USER,
+            parentSetId = save.parentSetId,
+            jobId = null,
+            modelVersion = null,
+            segments = save.segments,
+            scores = null,
+            editLog = save.editLog,
+            isFinal = save.isFinal,
+            createdAt = "2026-01-02T00:00:00Z",
+        )
+    }
+}
+
+fun newQueue(
+    store: ProjectStore,
+    server: FakeSegmentSetServer = FakeSegmentSetServer(),
+) = SaveQueue(store, loadSets = { server.sets }, upload = server::upload)
 
 fun prediction(
     segments: List<Segment>,

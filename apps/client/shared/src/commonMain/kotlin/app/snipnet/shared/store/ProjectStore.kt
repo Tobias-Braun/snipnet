@@ -1,9 +1,11 @@
 package app.snipnet.shared.store
 
 import app.snipnet.shared.model.Court
+import app.snipnet.shared.model.EditOp
 import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SnipnetJson
 import app.snipnet.shared.store.db.SnipnetDatabase
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 
 /**
@@ -14,6 +16,10 @@ import kotlinx.serialization.builtins.ListSerializer
  * @property remoteVideoId the server-side video id, null until the proxy has been registered with the API.
  * @property draftSegments the unsaved editing state, so a crash or restart does not lose work; null when there is
  * no draft yet.
+ * @property baseSetId the segment set the draft started from, sent as `parentSetId` on the next save; null when the
+ * video has no segment set yet.
+ * @property draftEditLog the edit operations since [baseSetId] that led to [draftSegments].
+ * @property pendingSave a save that has not reached the server yet; retried until it is accepted.
  */
 data class Project(
     val id: String,
@@ -24,6 +30,21 @@ data class Project(
     val draftSegments: List<Segment>?,
     val createdAtMs: Long,
     val lastOpenedMs: Long,
+    val baseSetId: String? = null,
+    val draftEditLog: List<EditOp> = emptyList(),
+    val pendingSave: PendingSave? = null,
+)
+
+/**
+ * A user segment set waiting to be posted to `POST /v1/videos/:id/segment-sets`. It is a snapshot: later edits do
+ * not change it, they produce a newer save that replaces it.
+ */
+@Serializable
+data class PendingSave(
+    val parentSetId: String?,
+    val segments: List<Segment>,
+    val editLog: List<EditOp>,
+    val isFinal: Boolean,
 )
 
 /**
@@ -94,11 +115,59 @@ class ProjectStore(
         court: Court?,
     ) = queries.updateCourt(court?.let { SnipnetJson.encodeToString(Court.serializer(), it) }, id)
 
-    /** Stores the current unsaved segment state; pass null to discard the draft, for example after a final save. */
+    /**
+     * Stores the current unsaved segment state and the edit operations that led to it; pass null segments to
+     * discard the draft.
+     */
     fun saveDraft(
         id: String,
         segments: List<Segment>?,
-    ) = queries.updateDraft(segments?.let { SnipnetJson.encodeToString(segmentListSerializer, it) }, id)
+        editLog: List<EditOp> = emptyList(),
+    ) = queries.updateDraft(
+        segments?.let { SnipnetJson.encodeToString(segmentListSerializer, it) },
+        if (segments == null || editLog.isEmpty()) null else SnipnetJson.encodeToString(editLogSerializer, editLog),
+        id,
+    )
+
+    fun setBaseSetId(
+        id: String,
+        baseSetId: String?,
+    ) = queries.updateBaseSet(baseSetId, id)
+
+    /** Queues [save] for upload, replacing an older queued save; null clears the queue. */
+    fun setPendingSave(
+        id: String,
+        save: PendingSave?,
+    ) = queries.updatePendingSave(save?.let { SnipnetJson.encodeToString(PendingSave.serializer(), it) }, id)
+
+    /** Projects with a save that still has to reach the server. */
+    fun withPendingSave(): List<Project> = queries.selectWithPendingSave().executeAsList().mapNotNull { get(it) }
+
+    /**
+     * Records that the server accepted [saved] as the segment set [createdSetId]: later edits start from that set,
+     * the draft's edit log keeps only the operations made after [saved], and the queued save is cleared unless a
+     * newer one replaced it meanwhile. Returns the remaining edit log.
+     *
+     * When the draft log no longer begins with the saved operations (the user undid saved edits meanwhile), it can
+     * no longer be expressed relative to the new base, so it starts over empty.
+     */
+    fun markSaved(
+        id: String,
+        createdSetId: String,
+        saved: PendingSave,
+    ): List<EditOp> {
+        val project = get(id) ?: return emptyList()
+        val log = project.draftEditLog
+        val remaining = if (log.take(saved.editLog.size) == saved.editLog) log.drop(saved.editLog.size) else emptyList()
+        val pending = project.pendingSave.takeUnless { it == saved }
+        queries.updateSyncedState(
+            createdSetId,
+            if (remaining.isEmpty()) null else SnipnetJson.encodeToString(editLogSerializer, remaining),
+            pending?.let { SnipnetJson.encodeToString(PendingSave.serializer(), it) },
+            id,
+        )
+        return remaining
+    }
 
     /** Marks the project as opened just now so it sorts to the top of the list. */
     fun markOpened(id: String) = queries.updateLastOpened(now(), id)
@@ -118,9 +187,14 @@ class ProjectStore(
             draftSegments = draft_segments_json?.let { SnipnetJson.decodeFromString(segmentListSerializer, it) },
             createdAtMs = created_at_ms,
             lastOpenedMs = last_opened_ms,
+            baseSetId = base_set_id,
+            draftEditLog =
+                draft_edit_log_json?.let { SnipnetJson.decodeFromString(editLogSerializer, it) } ?: emptyList(),
+            pendingSave = pending_save_json?.let { SnipnetJson.decodeFromString(PendingSave.serializer(), it) },
         )
 
     private companion object {
         val segmentListSerializer = ListSerializer(Segment.serializer())
+        val editLogSerializer = ListSerializer(EditOp.serializer())
     }
 }

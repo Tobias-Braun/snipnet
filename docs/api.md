@@ -53,7 +53,7 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `POST /v1/videos` | `{ filename, durationMs, width, height, fps, proxySizeBytes }` | `201 { video, upload: { url, method: "PUT", headers: {…}, expiresAt } }` |
 | `GET /v1/videos` | – | `200 { items: Video[] }` (own videos, newest first) |
 | `GET /v1/videos/:id` | – | `200 Video` |
-| `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows); `409` while a job is `queued`/`running` |
+| `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows); `409` while a job is `running` (a `queued` job is dropped with the video) |
 | `POST /v1/videos/:id/upload-complete` | – | `200 Video` (status `uploaded`); `409` if object missing or size mismatch |
 | `PUT /v1/videos/:id/court` | `Court` | `200 Video` |
 | `POST /v1/videos/:id/analyze` | `{}` | `202 Job`; `409` if not uploaded (`created`), court missing, or a job is queued/running. Videos in `analyzed` or `failed` status can be analyzed again, see "Re-analysis" |
@@ -145,9 +145,12 @@ job. The client re-uploads by creating a new video. An overwrite after the claim
 store cannot be reached during that check, the claim answers `500` and leaves the job as it was, without spending
 an attempt.
 
-`DELETE /v1/videos/:id` is refused with `409` while the video has a `queued` or `running` job, so a worker never
-loses its video mid-analysis; there is no cancel, the client retries once the job has succeeded or failed. The
-check runs under the video's row lock, so it cannot race with `analyze`. Should a job vanish anyway, the
+`DELETE /v1/videos/:id` is refused with `409` while the video has a `running` job, so a worker never loses its video
+mid-analysis; the client retries once the job has succeeded or failed. A job that is still `queued` has reached no
+worker, so the delete drops it together with the video (there is no separate cancel endpoint; without this, a video
+could not be deleted while no worker runs). Queued jobs are taken with `FOR UPDATE SKIP LOCKED`: one that a worker's
+claim holds at that moment is not dropped and answers `409` as well, and the whole delete is rolled back. The
+checks run under the video's row lock, so they cannot race with `analyze`. Should a job vanish anyway, the
 `/internal/jobs/:id/*` endpoints answer `404` and the worker drops it.
 
 ## Proxy format

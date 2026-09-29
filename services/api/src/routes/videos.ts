@@ -221,8 +221,33 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
           .executeTakeFirst();
         if (video === undefined) throw new AppError('not_found', 'Video not found');
 
+        // A still-queued job has not reached a worker, so it is dropped together with the video instead of
+        // blocking the delete until some worker claims it (with no worker running that would be forever). The
+        // rows are taken with SKIP LOCKED: a queued job that a worker's claim currently holds is left alone
+        // and, being still active, turns into the 409 below. Waiting for that lock instead could deadlock with
+        // a worker that holds a job and wants the video row we lock here.
+        const queued = await trx
+          .selectFrom('jobs')
+          .select('id')
+          .where('video_id', '=', video.id)
+          .where('status', '=', 'queued')
+          .forUpdate()
+          .skipLocked()
+          .execute();
+        if (queued.length > 0) {
+          await trx
+            .deleteFrom('jobs')
+            .where(
+              'id',
+              'in',
+              queued.map((job) => job.id),
+            )
+            .execute();
+        }
+
         // A worker may be downloading the proxy or about to post its result; deleting now would pull the data
-        // out from under it. The client retries once the job has finished or failed.
+        // out from under it. The client retries once the job has finished or failed. Throwing rolls back the
+        // deletion of the queued jobs above.
         const active = await trx
           .selectFrom('jobs')
           .select('id')

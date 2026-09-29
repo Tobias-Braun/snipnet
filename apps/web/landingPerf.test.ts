@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { optimizeHtml, type BundleEntry } from './landingPerf.ts';
+import { landingPerf, optimizeHtml, type BundleEntry } from './landingPerf.ts';
 
 const HTML = `<!doctype html>
 <html>
@@ -56,11 +56,47 @@ describe('optimizeHtml', () => {
     const css: BundleEntry = {
       type: 'asset',
       fileName: 'assets/index-abc.css',
-      source: 'a{content:"</style>"}',
+      source: 'a{content:"</style>"}b{content:"</STYLE>"}',
     };
 
     const html = optimizeHtml(HTML, { ...BUNDLE, 'assets/index-abc.css': css });
 
-    expect(html.match(/<\/style>/g)).toHaveLength(1);
+    expect(html.match(/<\/style>/gi)).toHaveLength(1);
+  });
+
+  it('prefixes the font preloads with the configured base path', () => {
+    const html = optimizeHtml(HTML, BUNDLE, '/landing/');
+
+    expect(html).toContain('href="/landing/assets/inter-latin-wght-normal-x1.woff2"');
+  });
+});
+
+describe('landingPerf', () => {
+  type Handler = (html: string, context: { bundle: Record<string, BundleEntry> }) => string;
+
+  function build(base: string, bundle: Record<string, BundleEntry>): string {
+    const plugin = landingPerf();
+    (plugin.configResolved as unknown as (config: { base: string }) => void)({ base });
+    const hook = plugin.transformIndexHtml as unknown as { handler: Handler };
+    return hook.handler(HTML, { bundle });
+  }
+
+  it('drops only the inlined stylesheet and keeps the CSS of lazy chunks', () => {
+    const lazyCss: BundleEntry = { type: 'asset', fileName: 'assets/Editor-def.css', source: 'p{color:red}' };
+    const bundle: Record<string, BundleEntry> = { ...BUNDLE, 'assets/Editor-def.css': lazyCss };
+
+    build('/', bundle);
+
+    expect(bundle['assets/index-abc.css']).toBeUndefined();
+    expect(bundle['assets/Editor-def.css']).toBe(lazyCss);
+  });
+
+  it('leaves the HTML alone for a relative base, where inlined font URLs would break', () => {
+    const bundle = { ...BUNDLE };
+
+    const html = build('./', bundle);
+
+    expect(html).toBe(HTML);
+    expect(bundle['assets/index-abc.css']).toBeDefined();
   });
 });

@@ -42,7 +42,7 @@ fun App(container: AppContainer) {
                 Screen.Login -> LoginScreen(container)
                 Screen.Projects -> ProjectsScreen(container)
                 is Screen.CourtSelection -> CourtSelectionScreen(container, screen.videoId)
-                is Screen.Editor -> EditorScreen(navigator, screen.videoId)
+                is Screen.Editor -> EditorScreen(container, screen.videoId)
             }
         }
     }

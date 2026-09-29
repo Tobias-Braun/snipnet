@@ -30,6 +30,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      # The bundled FFmpeg links its avdevice library against PulseAudio, which the runner image does not ship.
+      - run: sudo apt-get update && sudo apt-get install -y libpulse0
       - uses: gradle/actions/setup-gradle@v6
       # `check` runs ktlint on every source set and the unit tests of all modules.
       - run: ./gradlew check --stacktrace

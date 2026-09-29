@@ -2,7 +2,7 @@ import type { FastifyPluginCallbackTypebox } from '@fastify/type-provider-typebo
 import { sql, type ExpressionBuilder, type Selectable, type Transaction } from 'kysely';
 import Type from 'typebox';
 
-import type { Database, JobsTable, VideosTable } from '../db/types.js';
+import type { CourtDetectionTasksTable, Database, JobsTable, VideosTable } from '../db/types.js';
 import { AppError } from '../errors.js';
 import { requireInternalToken } from '../plugins/internal-auth.js';
 import { Court, CourtSuggestion, CourtSuggestionBody, Job, Video } from '../schemas.js';
@@ -48,6 +48,12 @@ const ResultBody = Type.Object(
   { additionalProperties: false },
 );
 
+/** Failure report of a job or a court detection task, sent by the worker that holds the lease. */
+const FailBody = Type.Object(
+  { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
+  { additionalProperties: false },
+);
+
 type Tx = Transaction<Database>;
 
 /**
@@ -78,6 +84,15 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
 
   const security = [{ internalToken: [] }];
   const error = Type.Ref('ErrorResponse');
+
+  /** Route schema shared by the failure reports of jobs and court detection tasks. */
+  const failSchema = {
+    tags: ['internal'],
+    security,
+    params: JobParams,
+    body: FailBody,
+    response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
+  };
 
   /**
    * Marks a job failed for good and fails its video. Used when the retry budget is spent, either because the
@@ -295,38 +310,23 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
   );
 
-  app.post(
-    '/jobs/:id/fail',
-    {
-      schema: {
-        tags: ['internal'],
-        security,
-        params: JobParams,
-        body: Type.Object(
-          { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
-          { additionalProperties: false },
-        ),
-        response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
-      },
-    },
-    async (request, reply) => {
-      const { error: message, retryable } = request.body;
-      await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
-        if (retryable && job.attempts < MAX_ATTEMPTS) {
-          // Back to the queue for another worker; the video stays `analyzing`.
-          await trx
-            .updateTable('jobs')
-            .set({ status: 'queued', error: message, worker_id: null, lease_expires_at: null, progress: 0 })
-            .where('id', '=', job.id)
-            .execute();
-        } else {
-          await failPermanently(trx, job, message);
-        }
-      });
-      return reply.code(204).send(null);
-    },
-  );
+  app.post('/jobs/:id/fail', { schema: failSchema }, async (request, reply) => {
+    const { error: message, retryable } = request.body;
+    await app.db.transaction().execute(async (trx) => {
+      const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
+      if (retryable && job.attempts < MAX_ATTEMPTS) {
+        // Back to the queue for another worker; the video stays `analyzing`.
+        await trx
+          .updateTable('jobs')
+          .set({ status: 'queued', error: message, worker_id: null, lease_expires_at: null, progress: 0 })
+          .where('id', '=', job.id)
+          .execute();
+      } else {
+        await failPermanently(trx, job, message);
+      }
+    });
+    return reply.code(204).send(null);
+  });
 
   /**
    * Picks the oldest queued detection task, or a running one whose lease expired, and leases it to `workerId`. A
@@ -386,7 +386,11 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
    * `workerId` the task must also still be leased to that worker: a failure report from a worker whose lease expired
    * would otherwise requeue the attempt of the worker that took the task over.
    */
-  async function lockRunningCourtTask(trx: Tx, videoId: string, workerId?: string): Promise<void> {
+  async function lockRunningCourtTask(
+    trx: Tx,
+    videoId: string,
+    workerId?: string,
+  ): Promise<Selectable<CourtDetectionTasksTable>> {
     if (!UUID_PATTERN.test(videoId)) throw new AppError('not_found', 'Video not found');
     const task = await trx
       .selectFrom('court_detection_tasks')
@@ -404,6 +408,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         'Court detection task is held by another worker, its lease was taken over',
       );
     }
+    return task;
   }
 
   app.post(
@@ -468,44 +473,24 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
   );
 
-  app.post(
-    '/videos/:id/court-suggestion/fail',
-    {
-      schema: {
-        tags: ['internal'],
-        security,
-        params: JobParams,
-        body: Type.Object(
-          { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
-          { additionalProperties: false },
-        ),
-        response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
-      },
-    },
-    async (request, reply) => {
-      const { workerId, error: message, retryable } = request.body;
-      await app.db.transaction().execute(async (trx) => {
-        await lockRunningCourtTask(trx, request.params.id, workerId);
-        const task = await trx
-          .selectFrom('court_detection_tasks')
-          .select('attempts')
-          .where('video_id', '=', request.params.id)
-          .executeTakeFirstOrThrow();
-        const requeue = retryable && task.attempts < MAX_ATTEMPTS;
-        await trx
-          .updateTable('court_detection_tasks')
-          .set({
-            status: requeue ? 'queued' : 'failed',
-            error: message,
-            worker_id: null,
-            lease_expires_at: null,
-          })
-          .where('video_id', '=', request.params.id)
-          .execute();
-      });
-      return reply.code(204).send(null);
-    },
-  );
+  app.post('/videos/:id/court-suggestion/fail', { schema: failSchema }, async (request, reply) => {
+    const { workerId, error: message, retryable } = request.body;
+    await app.db.transaction().execute(async (trx) => {
+      const task = await lockRunningCourtTask(trx, request.params.id, workerId);
+      const requeue = retryable && task.attempts < MAX_ATTEMPTS;
+      await trx
+        .updateTable('court_detection_tasks')
+        .set({
+          status: requeue ? 'queued' : 'failed',
+          error: message,
+          worker_id: null,
+          lease_expires_at: null,
+        })
+        .where('video_id', '=', request.params.id)
+        .execute();
+    });
+    return reply.code(204).send(null);
+  });
 
   done();
 };

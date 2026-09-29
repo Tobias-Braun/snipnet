@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema, insertVideo, registerUser } from './helpers/seed.js';
 
 const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
 const COURT = { roi: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 }, netPoint: { x: 0.4, y: 0.55 } };
@@ -15,13 +14,7 @@ describe('court suggestion', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
     app = await buildApp({ config: schema.config });
   });
 
@@ -30,37 +23,21 @@ describe('court suggestion', () => {
     await schema.drop();
   });
 
-  async function newUser(): Promise<{ id: string; auth: { authorization: string } }> {
+  async function newUser() {
     counter += 1;
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/auth/register',
-      payload: { email: `court-user${String(counter)}@example.com`, password: 'correct horse' },
-    });
-    const body = response.json<{ token: string; user: { id: string } }>();
-    return { id: body.user.id, auth: { authorization: `Bearer ${body.token}` } };
+    return registerUser(app, `court-user${String(counter)}@example.com`);
   }
 
   /** Inserts an uploaded video with a queued detection task, as `upload-complete` leaves it. */
   async function seedVideoWithTask(userId: string): Promise<string> {
     counter += 1;
-    const row = await app.db
-      .insertInto('videos')
-      .values({
-        user_id: userId,
-        filename: 'match.mov',
-        duration_ms: 90_000,
-        width: 854,
-        height: 480,
-        fps: 15,
-        proxy_size_bytes: 2048,
-        status: 'uploaded',
-        object_key: `proxies/${userId}/court-${String(counter)}.mp4`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    await app.db.insertInto('court_detection_tasks').values({ video_id: row.id }).execute();
-    return row.id;
+    const videoId = await insertVideo(app.db, {
+      user_id: userId,
+      status: 'uploaded',
+      object_key: `proxies/${userId}/court-${String(counter)}.mp4`,
+    });
+    await app.db.insertInto('court_detection_tasks').values({ video_id: videoId }).execute();
+    return videoId;
   }
 
   /**

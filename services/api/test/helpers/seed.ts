@@ -1,3 +1,4 @@
+import type { FastifyInstance } from 'fastify';
 import type { Insertable, Kysely } from 'kysely';
 
 import type { AppConfig } from '../../src/config.js';
@@ -58,4 +59,18 @@ export async function insertVideo(
     .returning('id')
     .executeTakeFirstOrThrow();
   return row.id;
+}
+
+/** Registers a user with `email` through the public endpoint and returns its id and bearer header. */
+export async function registerUser(
+  app: FastifyInstance,
+  email: string,
+): Promise<{ id: string; auth: { authorization: string } }> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/v1/auth/register',
+    payload: { email, password: 'correct horse' },
+  });
+  const body = response.json<{ token: string; user: { id: string } }>();
+  return { id: body.user.id, auth: { authorization: `Bearer ${body.token}` } };
 }

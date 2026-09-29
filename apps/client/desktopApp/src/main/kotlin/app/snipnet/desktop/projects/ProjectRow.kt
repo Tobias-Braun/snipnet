@@ -52,6 +52,12 @@ data class ProjectRow(
     /** True while a step can still be cancelled: transcoding and uploading are local work the user may abort. */
     val cancellable: Boolean get() = status == ProjectStatus.PROXY || status == ProjectStatus.UPLOADING
 
+    /**
+     * False while an analysis runs: the server refuses to delete a video with a queued or running job, so removing the
+     * project then would strand the server video (see [ImportPipeline.remove]).
+     */
+    val removable: Boolean get() = status != ProjectStatus.ANALYZING
+
     companion object {
         /**
          * Decides the badge. A running or failed [task] wins over everything else because it is the freshest fact;

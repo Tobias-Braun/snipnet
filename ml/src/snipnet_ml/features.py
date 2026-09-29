@@ -20,6 +20,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
+import tempfile
+import zipfile
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -140,26 +144,29 @@ def expanded_pixel_box(roi: Roi, expand: float, width: int, height: int) -> tupl
     )
 
 
-def decode_gray_frames(path: str | Path, fps: float) -> tuple[np.ndarray, np.ndarray, float]:
-    """Decode grayscale frames resampled to `fps`; returns `(frames[n, h, w], timestamps_s[n], duration_s)`."""
-    frames: list[np.ndarray] = []
-    times: list[float] = []
+def probe_duration(path: str | Path) -> float:
+    """Container duration in seconds, or 0 when the container does not declare one."""
+    with av.open(str(path)) as container:
+        return float(container.duration / av.time_base) if container.duration else 0.0
+
+
+def decode_gray_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np.ndarray]]:
+    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`.
+
+    This is a generator on purpose: an hour of 480p proxy at 5 fps is several GB of grayscale pixels, so frames are
+    consumed one at a time instead of being stacked into a single array.
+    """
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
-        duration = float(container.duration / av.time_base) if container.duration else 0.0
         next_time = 0.0
         step = 1.0 / fps
         for frame in container.decode(stream):
             if frame.time is None or frame.time + 1e-6 < next_time:
                 continue
-            frames.append(frame.to_ndarray(format="gray"))
-            times.append(frame.time)
+            yield frame.time, frame.to_ndarray(format="gray")
             # Advance past the timestamp actually taken so a slow source does not cause a burst of catch-up frames.
             next_time = max(next_time + step, frame.time + step / 2)
-    if not frames:
-        raise ValueError(f"no video frames decoded from {path}")
-    return np.stack(frames), np.asarray(times), duration or float(times[-1] + step)
 
 
 def decode_audio(path: str | Path, sample_rate: int) -> np.ndarray:
@@ -185,31 +192,47 @@ def _window_mean(values: np.ndarray, times: np.ndarray, window_s: float, n_windo
     return np.divide(sums, counts, out=np.zeros(n_windows), where=counts > 0)
 
 
-def motion_features(
-    frames: np.ndarray, times: np.ndarray, box: tuple[int, int, int, int], config: FeatureConfig, n_windows: int
-) -> tuple[np.ndarray, np.ndarray]:
-    """ROI and outside motion energy per window, robust to global lighting changes."""
-    if len(frames) < 2:
-        return np.zeros(n_windows), np.zeros(n_windows)
-    x0, y0, x1, y1 = box
-    inside = np.zeros(frames.shape[1:], dtype=bool)
-    inside[y0:y1, x0:x1] = True
+@dataclass(frozen=True)
+class MotionSeries:
+    """Motion energy per consecutive frame pair, stamped with the time of the newer frame of the pair."""
 
-    roi_values = np.empty(len(frames) - 1)
-    outside_values = np.empty(len(frames) - 1)
-    for i in range(len(frames) - 1):
-        diff = frames[i + 1].astype(np.float32) - frames[i].astype(np.float32)
-        # A lighting change shifts every pixel by about the same amount; the median removes that shift while real
-        # motion, which touches only a minority of pixels, survives.
-        motion = np.abs(diff - np.median(diff))
-        roi_values[i] = motion[inside].mean()
-        outside_values[i] = motion[~inside].mean() if not inside.all() else 0.0
-    # A difference belongs to the window in which the newer of the two frames lies.
-    diff_times = times[1:]
-    return (
-        _window_mean(roi_values, diff_times, config.window_s, n_windows),
-        _window_mean(outside_values, diff_times, config.window_s, n_windows),
-    )
+    times: np.ndarray
+    roi: np.ndarray
+    outside: np.ndarray
+    last_frame_time: float
+
+
+def motion_series(frames: Iterable[tuple[float, np.ndarray]], roi: Roi, expand: float) -> MotionSeries:
+    """ROI and outside motion energy of every frame pair, robust to global lighting changes.
+
+    Only the previous frame is kept in memory, so arbitrarily long videos stream through in constant space.
+    """
+    previous: np.ndarray | None = None
+    inside = np.zeros(0, dtype=bool)
+    last_time = 0.0
+    times: list[float] = []
+    roi_values: list[float] = []
+    outside_values: list[float] = []
+    for time_s, frame in frames:
+        current = frame.astype(np.float32)
+        if previous is None:
+            height, width = current.shape
+            x0, y0, x1, y1 = expanded_pixel_box(roi, expand, width, height)
+            inside = np.zeros(current.shape, dtype=bool)
+            inside[y0:y1, x0:x1] = True
+        else:
+            diff = current - previous
+            # A lighting change shifts every pixel by about the same amount; the median removes that shift while
+            # real motion, which touches only a minority of pixels, survives.
+            motion = np.abs(diff - np.median(diff))
+            times.append(time_s)
+            roi_values.append(float(motion[inside].mean()))
+            outside_values.append(float(motion[~inside].mean()) if not inside.all() else 0.0)
+        previous = current
+        last_time = time_s
+    if previous is None:
+        raise ValueError("no video frames decoded")
+    return MotionSeries(np.asarray(times), np.asarray(roi_values), np.asarray(outside_values), last_time)
 
 
 def audio_features(samples: np.ndarray, config: FeatureConfig, n_windows: int) -> tuple[np.ndarray, ...]:
@@ -247,12 +270,15 @@ def audio_features(samples: np.ndarray, config: FeatureConfig, n_windows: int) -
 def compute_features(path: str | Path, roi: Roi, config: FeatureConfig | None = None) -> FeatureFrame:
     """Decode `path` and compute the feature table without touching any cache."""
     config = config or FeatureConfig()
-    frames, times, duration = decode_gray_frames(path, config.fps)
-    height, width = frames.shape[1:]
-    box = expanded_pixel_box(roi, config.roi_expand, width, height)
+    try:
+        motion = motion_series(decode_gray_frames(path, config.fps), roi, config.roi_expand)
+    except ValueError as error:
+        raise ValueError(f"{error} from {path}") from error
+    duration = probe_duration(path) or motion.last_frame_time + 1.0 / config.fps
     n_windows = max(1, math.ceil(duration / config.window_s - 1e-9))
 
-    roi_motion, outside_motion = motion_features(frames, times, box, config, n_windows)
+    roi_motion = _window_mean(motion.roi, motion.times, config.window_s, n_windows)
+    outside_motion = _window_mean(motion.outside, motion.times, config.window_s, n_windows)
     onset_mean, onset_max, transients = audio_features(decode_audio(path, config.sample_rate), config, n_windows)
     starts = np.arange(n_windows) * config.window_s
     return FeatureFrame.from_arrays(
@@ -277,12 +303,21 @@ def extract_features(
     if cache_file.exists():
         try:
             return FeatureFrame.load(cache_file)
-        except (ValueError, KeyError, OSError):
+        except (ValueError, KeyError, OSError, EOFError, zipfile.BadZipFile):
             # A truncated or foreign cache file is simply recomputed and overwritten.
             pass
     result = compute_features(path, roi, config)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    result.save(cache_file)
+    # Write to a unique temporary file and rename it into place, so a crash or a concurrent worker never leaves a
+    # half-written file under the final name.
+    handle, temporary = tempfile.mkstemp(dir=cache_file.parent, prefix=f".{cache_file.stem}-", suffix=".npz")
+    os.close(handle)
+    try:
+        result.save(temporary)
+        os.replace(temporary, cache_file)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
     return result
 
 

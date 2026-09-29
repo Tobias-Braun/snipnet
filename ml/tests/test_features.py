@@ -98,13 +98,33 @@ def test_motion_ignores_global_brightness_shift() -> None:
     brighter = np.clip(base.astype(int) + 30, 0, 255).astype(np.uint8)
     moved = base.copy()
     moved[10:30, 20:40] = 255 - moved[10:30, 20:40]
-    times = np.array([0.0, 0.2, 0.4])
-    box = (0, 0, 64, 48)
-    config = FeatureConfig()
-    lit, _ = features.motion_features(np.stack([base, brighter, base]), times, box, config, 1)
-    real, _ = features.motion_features(np.stack([base, moved, base]), times, box, config, 1)
-    assert lit[0] < 0.5
-    assert real[0] > 10 * lit[0]
+    times = [0.0, 0.2, 0.4]
+    whole_frame = Roi(x=0, y=0, width=1, height=1)
+    lit = features.motion_series(zip(times, [base, brighter, base], strict=True), whole_frame, 0.0)
+    real = features.motion_series(zip(times, [base, moved, base], strict=True), whole_frame, 0.0)
+    assert np.array_equal(lit.times, [0.2, 0.4])
+    assert lit.roi.max() < 0.5
+    assert real.roi.min() > 10 * lit.roi.max()
+
+
+def test_motion_series_rejects_empty_video() -> None:
+    with pytest.raises(ValueError, match="no video frames"):
+        features.motion_series([], Roi(x=0, y=0, width=1, height=1), 0.0)
+
+
+@needs_ffmpeg
+def test_corrupt_cache_file_is_recomputed(synthetic, tmp_path) -> None:
+    video, labels = synthetic
+    roi = labels.court.roi
+    expected = extract_features(video, roi, cache_dir=tmp_path)
+    (cache_file,) = tmp_path.glob("*.npz")
+    cache_file.write_bytes(cache_file.read_bytes()[:100])
+
+    recovered = extract_features(video, roi, cache_dir=tmp_path)
+    assert np.array_equal(recovered.roi_motion, expected.roi_motion)
+    # The rewritten entry is complete again and no temporary files are left behind.
+    assert len(FeatureFrame.load(cache_file)) == len(expected)
+    assert list(tmp_path.iterdir()) == [cache_file]
 
 
 def test_expanded_box_is_clipped_to_frame() -> None:

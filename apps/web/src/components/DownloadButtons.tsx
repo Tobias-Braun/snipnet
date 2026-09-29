@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { RELEASES_URL } from '../content.ts';
-import { detectOs, fetchLatestRelease, type DownloadOption, type LatestRelease } from '../releases.ts';
+import { detectArch, detectOs, fetchLatestRelease, type DownloadOption, type LatestRelease } from '../releases.ts';
 
 /**
  * Download call to action. It renders the releases page link immediately, then upgrades to a primary
@@ -13,9 +13,11 @@ export function DownloadButtons() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetchLatestRelease(controller.signal).then((latest) => {
-      if (!controller.signal.aborted) setRelease(latest);
-    });
+    void detectArch()
+      .then((arch) => fetchLatestRelease(controller.signal, arch))
+      .then((latest) => {
+        if (!controller.signal.aborted) setRelease(latest);
+      });
     return () => controller.abort();
   }, []);
 

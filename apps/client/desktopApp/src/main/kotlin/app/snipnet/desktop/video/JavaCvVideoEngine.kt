@@ -32,7 +32,11 @@ class JavaCvVideoEngine(
     override suspend fun probe(file: Path): VideoInfo =
         withContext(Dispatchers.IO) {
             newGrabber(file).use { grabber ->
-                grabber.start()
+                try {
+                    grabber.start()
+                } catch (e: FFmpegFrameGrabber.Exception) {
+                    throw VideoEngineException("$file is not a readable media file", e)
+                }
                 if (!grabber.hasVideo()) throw VideoEngineException("$file has no video stream")
                 VideoInfo(
                     durationMs = grabber.lengthInTime / 1000,

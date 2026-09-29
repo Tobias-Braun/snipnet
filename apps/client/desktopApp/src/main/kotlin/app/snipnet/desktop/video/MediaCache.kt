@@ -30,13 +30,14 @@ class MediaCache(
 
     /**
      * Writes through a temporary sibling and renames, so a crash or cancellation mid-write never leaves a
-     * truncated file that a later run would mistake for a finished cache entry.
+     * truncated file that a later run would mistake for a finished cache entry. The temporary name is unique, so two
+     * generators filling the same entry at once (the timeline asking twice) do not write into each other's file.
      */
     fun writeAtomically(
         target: Path,
         write: (Path) -> Unit,
     ) {
-        val tmp = target.resolveSibling(target.fileName.toString() + ".tmp")
+        val tmp = Files.createTempFile(target.parent, target.fileName.toString(), ".tmp")
         try {
             write(tmp)
             Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)

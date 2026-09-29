@@ -52,8 +52,20 @@ internal class JavaCvVideoPlayer(
     private var pendingSeeks = 0
     private var closed = false
 
+    /**
+     * Set when the video pipeline ran out of frames, cleared by any seek. [play] uses it to restart from the
+     * beginning; the last frame's timestamp alone cannot tell, because it lies up to a frame (or more, when the audio
+     * track is longer) before [VideoInfo.durationMs].
+     */
+    private var ended = false
+
     private val audioLine: SourceDataLine? = if (audioOutput && info.hasAudio) openAudioLine() else null
-    private val pipelineCount = if (audioLine != null) 2 else 1
+
+    /**
+     * Pipeline threads still running. A seek waits for this many acknowledgements, so a pipeline that died (for
+     * example on an audio stream FFmpeg cannot decode) must drop out here instead of blocking every later seek.
+     */
+    private var livePipelines = if (audioLine != null) 2 else 1
 
     private val frameFlow = MutableSharedFlow<ImageBitmap>(replay = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val positionFlow = MutableStateFlow(0L)
@@ -76,7 +88,7 @@ internal class JavaCvVideoPlayer(
     override fun play() {
         lock.withLock {
             if (closed) return
-            if (positionFlow.value >= info.durationMs - 1) requestSeekLocked(0, exact = true)
+            if (ended) requestSeekLocked(0, exact = true)
             playing = true
             playingFlow.value = true
             if (pendingSeeks == 0) clock.start()
@@ -111,7 +123,10 @@ internal class JavaCvVideoPlayer(
             rateFlow.value = rate
             clock.rate = rate
             // Audio is only produced at 1x, so a rate change re-synchronizes both threads from the current position.
+            // That is not a user seek, so a player that sat at the end still restarts on the next play().
+            val wasEnded = ended
             requestSeekLocked(clock.nowMs().toLong(), exact = true)
+            ended = wasEnded
         }
         audioLine?.flush()
     }
@@ -139,7 +154,8 @@ internal class JavaCvVideoPlayer(
         generation++
         seekTargetMs = target
         seekExact = exact
-        pendingSeeks = pipelineCount
+        ended = false
+        pendingSeeks = livePipelines
         clock.stopAt(target)
         changed.signalAll()
     }
@@ -149,6 +165,20 @@ internal class JavaCvVideoPlayer(
             if (gen != generation) return@withLock
             pendingSeeks--
             if (pendingSeeks == 0 && playing) clock.start()
+            changed.signalAll()
+        }
+
+    /**
+     * Removes a crashed pipeline thread. A thread only fails while it still owes the acknowledgement of the current
+     * seek or while no seek is pending (never while parked in [nextWork]), so a pending seek counts it as done.
+     */
+    private fun pipelineFailed() =
+        lock.withLock {
+            livePipelines--
+            if (pendingSeeks > 0) {
+                pendingSeeks--
+                if (pendingSeeks == 0 && playing) clock.start()
+            }
             changed.signalAll()
         }
 
@@ -215,6 +245,7 @@ internal class JavaCvVideoPlayer(
             }
         } catch (e: Exception) {
             LOG.log(System.Logger.Level.ERROR, "video pipeline of $file failed", e)
+            pipelineFailed()
         } finally {
             runCatching { grabber.stop() }
             runCatching { grabber.release() }
@@ -277,6 +308,7 @@ internal class JavaCvVideoPlayer(
             if (generation != gen) return
             playing = false
             playingFlow.value = false
+            ended = true
             clock.stopAt(info.durationMs)
             changed.signalAll()
         }
@@ -310,6 +342,7 @@ internal class JavaCvVideoPlayer(
             }
         } catch (e: Exception) {
             LOG.log(System.Logger.Level.ERROR, "audio pipeline of $file failed", e)
+            pipelineFailed()
         } finally {
             runCatching { grabber.stop() }
             runCatching { grabber.release() }

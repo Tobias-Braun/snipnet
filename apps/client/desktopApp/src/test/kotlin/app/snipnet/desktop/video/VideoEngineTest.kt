@@ -1,11 +1,14 @@
 package app.snipnet.desktop.video
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import kotlin.test.AfterTest
@@ -69,6 +72,12 @@ class VideoEngineTest {
     @Test
     fun probeRejectsMissingFiles() {
         assertFailsWith<VideoEngineException> { runBlocking { engine.probe(tmp.resolve("missing.mp4")) } }
+    }
+
+    @Test
+    fun probeRejectsFilesThatAreNotMedia() {
+        val text = Files.writeString(tmp.resolve("notes.mp4"), "not a video")
+        assertFailsWith<VideoEngineException> { runBlocking { engine.probe(text) } }
     }
 
     @Test
@@ -137,9 +146,17 @@ class VideoEngineTest {
             player.setRate(8.0)
             player.play()
             withTimeout(TIMEOUT_MS) { player.isPlaying.first { !it } }
+            val endPosition = player.position.value
+            assertTrue(endPosition >= 3_800, "first run stopped at $endPosition")
+
+            // Recorded from before the second play() so the jump back to the start cannot be missed at 8x speed.
+            val seen = CopyOnWriteArrayList<Long>()
+            val recorder = launch(Dispatchers.Default) { player.position.collect { seen += it } }
             player.play()
             withTimeout(TIMEOUT_MS) { player.isPlaying.first { !it } }
-            assertTrue(player.position.value >= 3_800)
+            recorder.cancel()
+            assertTrue(seen.any { it < 1_000 }, "never went back to the start: $seen")
+            assertTrue(player.position.value >= 3_800, "second run stopped at ${player.position.value}")
         }
 
     @Test

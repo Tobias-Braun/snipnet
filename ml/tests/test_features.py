@@ -221,6 +221,7 @@ def _click_train(gain: float, noise: float, seconds: int = 10, rate: int = 16000
 
 @pytest.mark.parametrize("gain", [0.05, 0.3, 1.0, 4.0])
 def test_transient_count_is_independent_of_recording_gain(gain) -> None:
+    # The onset envelope is a log-power flux, so a pure gain change must cancel out end to end.
     config = FeatureConfig()
     n_windows = 20
     reference = features.audio_features(_click_train(1.0, 0.002), config, n_windows)[2].sum()
@@ -228,15 +229,36 @@ def test_transient_count_is_independent_of_recording_gain(gain) -> None:
     assert features.audio_features(_click_train(gain, 0.002), config, n_windows)[2].sum() == reference
 
 
-def test_transient_threshold_is_relative_to_the_video_but_ignores_pure_noise() -> None:
-    config = FeatureConfig()
-    envelope = np.zeros(2000)
-    envelope[100::100] = 20.0
-    baseline = features.transient_peaks(envelope, config)
-    assert len(baseline) == 19
-    np.testing.assert_array_equal(features.transient_peaks(envelope * 5, config), baseline)
+def _hits_and_footsteps(frames: int, hit_every: int, hit: float, footstep: float) -> tuple[np.ndarray, np.ndarray]:
+    """Onset envelope with a hit spike every `hit_every` frames and three weaker spikes (footsteps, voices) between.
+
+    Returns the envelope and the hit frame indices.
+    """
+    envelope = np.zeros(frames)
+    hits = np.arange(100, frames - hit_every, hit_every)
+    envelope[hits] = hit
+    for offset in (1, 2, 3):
+        envelope[hits + offset * hit_every // 4] = footstep
+    return envelope, hits
+
+
+@pytest.mark.parametrize(("hit", "footstep"), [(20.0, 5.0), (8.0, 2.0)])
+def test_transient_threshold_follows_the_videos_hit_level(hit, footstep) -> None:
+    # A close microphone (hits 20, footsteps 5) and a distant one (both 2.5x weaker) must count the same events; an
+    # absolute threshold between 2 and 5 would count the footsteps only on the close one.
+    envelope, hits = _hits_and_footsteps(4000, 80, hit, footstep)
+    np.testing.assert_array_equal(features.transient_peaks(envelope, FeatureConfig()), hits)
+
+
+def test_transient_reference_is_not_diluted_by_long_quiet_stretches() -> None:
+    # About 50 hits in 40000 frames (5 minutes) cover 0.1% of the frames, so any percentile of the raw frames is 0.
+    envelope, hits = _hits_and_footsteps(40000, 800, 20.0, 5.0)
+    np.testing.assert_array_equal(features.transient_peaks(envelope, FeatureConfig()), hits)
+
+
+def test_transient_threshold_ignores_pure_noise() -> None:
     noise = np.random.default_rng(1).uniform(0.0, 1.0, 2000)
-    assert len(features.transient_peaks(noise, config)) == 0
+    assert len(features.transient_peaks(noise, FeatureConfig())) == 0
 
 
 def test_transient_config_is_validated_and_part_of_the_cache_key() -> None:

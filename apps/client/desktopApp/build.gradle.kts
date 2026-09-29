@@ -86,7 +86,7 @@ compose.desktop {
             macOS {
                 iconFile.set(project.file("packaging/icon.icns"))
                 // jpackage rejects a macOS app whose major version is 0, so 0.x tags are packaged as 1.x there.
-                packageVersion =installerVersion.replace(Regex("^0\\."), "1.")
+                packageVersion = installerVersion.replace(Regex("^0\\."), "1.")
             }
             windows {
                 iconFile.set(project.file("packaging/icon.ico"))

@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 
 from snipnet_inference.settings import Settings
-from snipnet_ml import Court, InvalidInputError, Point, Prediction, RallyModel, Roi
+from snipnet_ml import Court, InvalidInputError, Prediction, RallyModel
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class ProxyDownloadError(Exception):
 def parse_court(raw: dict[str, Any] | None) -> Court | None:
     if not raw:
         return None
-    return Court(roi=Roi(**raw["roi"]), net_point=Point(**raw["netPoint"]))
+    return Court.model_validate(raw)
 
 
 def prediction_body(prediction: Prediction) -> dict[str, Any]:

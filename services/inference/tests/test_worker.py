@@ -4,9 +4,10 @@ from pathlib import Path
 import httpx
 import pytest
 import respx
+from pydantic import ValidationError
 
 from snipnet_inference.settings import Settings
-from snipnet_inference.worker import Worker
+from snipnet_inference.worker import Worker, parse_court
 from snipnet_ml import Court, InvalidInputError, Prediction, ProgressCallback, ScoreCurve, Segment
 
 API = "http://api.test"
@@ -42,7 +43,9 @@ class RecordingModel:
             progress(i / self.progress_calls)
         if self.error:
             raise self.error
-        return Prediction([Segment(1000, 2000, 0.9)], ScoreCurve(1.0, [0.0, 1.0]), self.version)
+        return Prediction(
+            [Segment(start_ms=1000, end_ms=2000, confidence=0.9)], ScoreCurve(1.0, [0.0, 1.0]), self.version
+        )
 
 
 class FakeClock:
@@ -133,6 +136,15 @@ def test_long_error_messages_are_truncated(api: respx.MockRouter) -> None:
     make_worker(RecordingModel(error=RuntimeError("x" * 5000)), httpx.Client()).run_once()
 
     assert json.loads(fail.calls[0].request.content)["error"] == "x" * 1000
+
+
+def test_parse_court_reads_the_camel_case_contract_and_rejects_out_of_range_values() -> None:
+    court = parse_court(CLAIM["video"]["court"])
+    assert court is not None
+    assert court.net_point.x == 0.4
+    assert parse_court(None) is None
+    with pytest.raises(ValidationError):
+        parse_court({"roi": {"x": 0.1, "y": 0.2, "width": 0.0, "height": 0.6}, "netPoint": {"x": 0.4, "y": 0.5}})
 
 
 def test_empty_queue_claims_nothing(api: respx.MockRouter) -> None:

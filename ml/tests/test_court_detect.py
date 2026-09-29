@@ -13,7 +13,8 @@ from snipnet_ml.court_detect import (
     suggest_from_frames,
     suggested_roi,
 )
-from snipnet_ml.model import InvalidInputError, Point
+from snipnet_ml.labels import Point
+from snipnet_ml.model import InvalidInputError
 
 WIDTH, HEIGHT = 480, 270
 YELLOW = (240, 220, 20)
@@ -130,11 +131,11 @@ def test_a_net_far_from_the_center_scores_low() -> None:
 
 
 def test_suggested_roi_is_centered_inside_the_frame_and_grows_with_the_net() -> None:
-    small = suggested_roi(Point(0.5, 0.5), 0.04)
-    large = suggested_roi(Point(0.5, 0.5), 0.08)
+    small = suggested_roi(Point(x=0.5, y=0.5), 0.04)
+    large = suggested_roi(Point(x=0.5, y=0.5), 0.08)
     assert large.width > small.width
     assert small.x + small.width / 2 == pytest.approx(0.5)
-    edge = suggested_roi(Point(0.97, 0.03), 0.08)
+    edge = suggested_roi(Point(x=0.97, y=0.03), 0.08)
     assert 0 <= edge.x <= 1 - edge.width
     assert 0 <= edge.y <= 1 - edge.height
 

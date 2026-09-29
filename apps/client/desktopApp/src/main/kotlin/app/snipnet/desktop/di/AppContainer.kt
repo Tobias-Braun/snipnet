@@ -5,6 +5,8 @@ import app.snipnet.desktop.auth.Session
 import app.snipnet.desktop.auth.TokenStore
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
+import app.snipnet.desktop.video.JavaCvVideoEngine
+import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
 import app.snipnet.shared.api.SnipnetApi
 import app.snipnet.shared.store.ProjectStore
@@ -28,6 +30,8 @@ class AppContainer(
     baseUrl: String = defaultBaseUrl(),
 ) {
     val windowSettingsStore = WindowSettingsStore(dataDir.resolve("window.json"))
+
+    val videoEngine: VideoEngine by lazy { JavaCvVideoEngine(dataDir.resolve("cache").resolve("media")) }
 
     val navigator = Navigator(start = Screen.Login)
 

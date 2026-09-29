@@ -7,6 +7,8 @@ serialization = "1.9.0"
 coroutines = "1.10.2"
 ktor = "3.6.0"
 sqldelight = "2.4.0"
+javacv = "1.5.14"
+ffmpeg = "8.1.2-1.5.14"
 
 [libraries]
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose-multiplatform" }
@@ -21,6 +23,9 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "sqldelight" }
 sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+javacv = { module = "org.bytedeco:javacv", version.ref = "javacv" }
+javacpp = { module = "org.bytedeco:javacpp", version.ref = "javacv" }
+ffmpeg = { module = "org.bytedeco:ffmpeg", version.ref = "ffmpeg" }
 
 [plugins]
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

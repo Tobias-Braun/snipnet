@@ -68,13 +68,14 @@ describe('migrations', () => {
     ).rejects.toThrow(/users_email_lower_key/);
   });
 
-  it('allows only one queued or running job per video', async () => {
+  /** Inserts a user owning one minimal video; `name` keeps email and object key unique across tests. */
+  async function insertVideo(name: string): Promise<{ id: string }> {
     const user = await db
       .insertInto('users')
-      .values({ email: 'jobs@example.com', password_hash: 'x' })
+      .values({ email: `${name}@example.com`, password_hash: 'x' })
       .returning('id')
       .executeTakeFirstOrThrow();
-    const video = await db
+    return db
       .insertInto('videos')
       .values({
         user_id: user.id,
@@ -84,10 +85,14 @@ describe('migrations', () => {
         height: 10,
         fps: 15,
         proxy_size_bytes: 1,
-        object_key: 'k',
+        object_key: `proxies/${name}.mp4`,
       })
       .returning('id')
       .executeTakeFirstOrThrow();
+  }
+
+  it('allows only one queued or running job per video', async () => {
+    const video = await insertVideo('jobs');
 
     const first = await db
       .insertInto('jobs')
@@ -103,25 +108,7 @@ describe('migrations', () => {
   });
 
   it('deletes dependent rows together with a video', async () => {
-    const user = await db
-      .insertInto('users')
-      .values({ email: 'cascade@example.com', password_hash: 'x' })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    const video = await db
-      .insertInto('videos')
-      .values({
-        user_id: user.id,
-        filename: 'v.mp4',
-        duration_ms: 1000,
-        width: 10,
-        height: 10,
-        fps: 15,
-        proxy_size_bytes: 1,
-        object_key: 'k2',
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const video = await insertVideo('cascade');
     await db
       .insertInto('segment_sets')
       .values({ video_id: video.id, kind: 'user', segments: JSON.stringify([{ startMs: 0, endMs: 10 }]) })

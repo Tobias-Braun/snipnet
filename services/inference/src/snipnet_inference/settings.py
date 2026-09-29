@@ -39,5 +39,5 @@ class Settings:
             internal_token=token,
             worker_id=env.get("WORKER_ID") or socket.gethostname(),
             poll_interval_s=poll_interval_s,
-            model=env.get("MODEL") or "dummy-v0",
+            model=env.get("MODEL") or "heuristic",
         )

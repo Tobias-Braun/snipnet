@@ -8,7 +8,7 @@ set -euo pipefail
 
 dist=desktopApp/build/compose/binaries/main/app
 runtime_java="$(find "$dist" -path '*/runtime/bin/java' \( -type f -o -type l \) | head -n 1)"
-[ -n "$runtime_java" ] || { echo "bundled runtime not found under $dist:" >&2; find "$dist" -maxdepth 3 >&2; exit 1; }
+[ -n "$runtime_java" ] || { echo "bundled runtime not found under $dist:" >&2; find "$dist" -maxdepth 5 >&2; exit 1; }
 # The app jars sit in the app/ folder next to the runtime/ folder.
 app_libs="$(dirname "$(dirname "$(dirname "$runtime_java")")")/app"
 ls "$app_libs" > /dev/null

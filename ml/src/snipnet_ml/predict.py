@@ -13,9 +13,10 @@ import json
 from pathlib import Path
 
 from snipnet_ml.eval import evaluate, format_table
+from snipnet_ml.features import video_duration
 from snipnet_ml.heuristic import HeuristicModel, HeuristicParams
 from snipnet_ml.labels import Court, load_labels
-from snipnet_ml.model import Prediction, probe_duration_ms
+from snipnet_ml.model import Prediction
 
 
 def load_court(path: Path) -> Court:
@@ -47,8 +48,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.labels:
         labels = load_labels(args.labels)
-        # The label file's duration is authoritative, but fall back to the probed one if it is shorter than the video.
-        duration_ms = max(labels.duration_ms, probe_duration_ms(args.video))
+        # The label file's duration is authoritative, but fall back to the real video length if it is shorter. The raw
+        # container duration is not used: it is the absolute end time for proxies with a timestamp offset.
+        duration_ms = max(labels.duration_ms, round(video_duration(args.video) * 1000))
         print()
         print(format_table(evaluate(prediction.segments, labels.rallies, duration_ms)))
 

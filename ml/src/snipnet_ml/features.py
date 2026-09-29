@@ -171,6 +171,27 @@ def bounded_duration(path: str | Path, content_end_s: float) -> float:
     return min(declared, content_end_s) if declared else content_end_s
 
 
+def video_duration(path: str | Path) -> float:
+    """Real video length in seconds without decoding: the container duration bounded by the last video packet's end.
+
+    Demuxing only reads packet headers, so this is cheap even for long proxies. The packet end is taken relative to
+    the timeline origin (see `stream_origin`), which removes the timestamp offset that inflates the declared duration
+    of e.g. Matroska files written with `-output_ts_offset`. Returns 0 when the file has no video packets.
+    """
+    with av.open(str(path)) as container:
+        if not container.streams.video:
+            return 0.0
+        stream = container.streams.video[0]
+        origin = stream_origin(container)
+        content_end = 0.0
+        for packet in container.demux(stream):
+            if packet.pts is None or packet.time_base is None:
+                continue
+            end = float((packet.pts + (packet.duration or 0)) * packet.time_base) - origin
+            content_end = max(content_end, end)
+    return bounded_duration(path, content_end) if content_end > 0 else 0.0
+
+
 def stream_origin(container: av.container.InputContainer) -> float:
     """Timeline origin in seconds: the start time of the first video stream, else of the container, else 0.
 

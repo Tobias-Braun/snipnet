@@ -97,6 +97,7 @@ class AppContainer(
                 transcoder = FfmpegProxyTranscoder(),
                 uploader = HttpProxyUploader(engine),
                 proxyDir = proxyDir,
+                currentUserId = { session.user.value?.id },
                 onAnalyzed = { project ->
                     if (navigator.current == Screen.Projects) navigator.push(Screen.Editor(project.id))
                 },

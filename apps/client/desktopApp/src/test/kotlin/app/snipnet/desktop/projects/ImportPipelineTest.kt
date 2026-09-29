@@ -248,6 +248,7 @@ class ImportPipelineTest {
             transcoder = transcoder,
             uploader = uploader,
             proxyDir = tmp.resolve("proxies"),
+            currentUserId = { signedIn },
             onAnalyzed = { analyzed += it },
             dispatcher = Dispatchers.Default,
             pollIntervalMs = 5,
@@ -452,6 +453,7 @@ class ImportPipelineTest {
                     transcoder = transcoder,
                     uploader = uploader,
                     proxyDir = tmp.resolve("proxies"),
+                    currentUserId = { signedIn },
                     dispatcher = Dispatchers.Default,
                     pollIntervalMs = 5,
                     maxPollIntervalMs = 20,
@@ -488,6 +490,66 @@ class ImportPipelineTest {
             awaitRow { it.status == ProjectStatus.READY }
             deleteOffline = true
             assertTrue(pipeline.remove("p1"))
+
+            signedIn = "u2"
+            assertEquals(emptyList(), store.pendingVideoDeletes())
+            signedIn = "u1"
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+        }
+
+    @Test
+    fun aRunningDeleteStopsSendingWhenTheAccountChangesAndTheEntryStaysWithItsOwner() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteConflicts.set(1_000)
+            assertTrue(pipeline.remove("p1"))
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+
+            signedIn = "u2"
+            // One attempt may already be past its account check; after that nothing more may go out.
+            kotlinx.coroutines.delay(200)
+            val sent = requests.count { it == "DELETE /v1/videos/v1" }
+            kotlinx.coroutines.delay(200)
+
+            assertEquals(sent, requests.count { it == "DELETE /v1/videos/v1" })
+            assertEquals(emptyList(), store.pendingVideoDeletes())
+            signedIn = "u1"
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+        }
+
+    @Test
+    fun aVideoCreatedForARemovedProjectIsNotDeletedWithAnotherAccountsToken() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+            pipeline.remove("p1")
+
+            signedIn = "u2"
+            gate.complete(Unit)
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
+
+            assertTrue("DELETE /v1/videos/v1" !in requests)
+            assertEquals(emptyList(), store.pendingVideoDeletes())
+            signedIn = "u1"
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+        }
+
+    @Test
+    fun aVideoCreatedForARemovedProjectIsQueuedUnderTheLaunchAccountWhenTheDeleteFails() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            deleteOffline = true
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+            pipeline.remove("p1")
+            gate.complete(Unit)
+            withTimeout(10_000) { pipeline.awaitTasksEnded() }
 
             signedIn = "u2"
             assertEquals(emptyList(), store.pendingVideoDeletes())

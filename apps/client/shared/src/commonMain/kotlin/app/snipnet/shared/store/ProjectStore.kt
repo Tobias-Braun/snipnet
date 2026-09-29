@@ -206,9 +206,16 @@ class ProjectStore(
     /**
      * Remembers that the server video [remoteVideoId] of a deleted project still has to be deleted, for the signed-in
      * user. Does nothing when nobody is signed in.
+     *
+     * Work that outlives the moment it was started in (a background delete) passes the [userId] it captured then, so
+     * the entry is written under that account even if another one is signed in by the time it runs. It is looked up
+     * now only by default.
      */
-    fun addPendingVideoDelete(remoteVideoId: String) {
-        val userId = currentUserId() ?: return
+    fun addPendingVideoDelete(
+        remoteVideoId: String,
+        userId: String? = currentUserId(),
+    ) {
+        if (userId == null) return
         queries.insertPendingVideoDelete(userId, remoteVideoId)
     }
 
@@ -218,9 +225,15 @@ class ProjectStore(
         return queries.selectPendingVideoDeletes(userId).executeAsList()
     }
 
-    /** Forgets a pending delete once the server confirmed it (204) or reported the video as gone (404). */
-    fun removePendingVideoDelete(remoteVideoId: String) {
-        val userId = currentUserId() ?: return
+    /**
+     * Forgets a pending delete once the server confirmed it (204) or reported the video as gone (404). [userId] is the
+     * account the delete was queued for, see [addPendingVideoDelete].
+     */
+    fun removePendingVideoDelete(
+        remoteVideoId: String,
+        userId: String? = currentUserId(),
+    ) {
+        if (userId == null) return
         queries.deletePendingVideoDelete(userId, remoteVideoId)
     }
 
@@ -238,9 +251,10 @@ class ProjectStore(
     fun deleteAndQueueRemoteDelete(
         id: String,
         remoteVideoId: String,
+        userId: String? = currentUserId(),
     ) = queries.transaction {
         queries.deleteById(id)
-        addPendingVideoDelete(remoteVideoId)
+        addPendingVideoDelete(remoteVideoId, userId)
     }
 
     /**

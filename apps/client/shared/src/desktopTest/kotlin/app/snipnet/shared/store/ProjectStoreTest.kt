@@ -94,6 +94,40 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun deleteAndQueueRemoteDeleteRemovesTheProjectAndQueuesTheVideo() {
+        val store = store()
+        val id = store.create("/a.mp4", remoteVideoId = "v1").id
+        val other = store.create("/b.mp4", remoteVideoId = "v2").id
+
+        store.deleteAndQueueRemoteDelete(id, "v1")
+
+        assertNull(store.get(id))
+        assertNotNull(store.get(other))
+        assertEquals(listOf("v1"), store.pendingVideoDeletes())
+    }
+
+    @Test
+    fun deleteAndQueueRemoteDeleteRollsBackTheDeleteWhenQueueingFails() {
+        val database = openInMemoryDatabase()
+        var failOnUserLookup = false
+        val store =
+            ProjectStore(
+                database,
+                newId = { "p${++counter}" },
+                now = { clock },
+                currentUserId = { if (failOnUserLookup) error("simulated crash") else "u1" },
+            )
+        val id = store.create("/a.mp4", remoteVideoId = "v1").id
+
+        failOnUserLookup = true
+        assertFailsWith<IllegalStateException> { store.deleteAndQueueRemoteDelete(id, "v1") }
+
+        failOnUserLookup = false
+        assertNotNull(store.get(id))
+        assertEquals(emptyList(), store.pendingVideoDeletes())
+    }
+
+    @Test
     fun ownershipIsCheckedAgainstTheCurrentUser() {
         val store = store()
         val id = store.create("/a.mp4").id

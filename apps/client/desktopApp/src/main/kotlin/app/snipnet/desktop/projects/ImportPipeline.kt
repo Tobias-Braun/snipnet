@@ -209,14 +209,16 @@ class ImportPipeline(
             targets.remove(projectId)
         }
         project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
-        store.delete(projectId)
-        publish()
-        project.remoteVideoId?.let { remoteId ->
-            // Persisted before the first attempt: the local row that knew the id is gone, so this entry is the only
-            // thing that lets a later run (or app start) finish the delete if this attempt does not.
-            store.addPendingVideoDelete(remoteId)
-            launchRemoteDelete(remoteId)
+        val remoteId = project.remoteVideoId
+        if (remoteId == null) {
+            store.delete(projectId)
+        } else {
+            // Deleted and queued atomically: the local row that knew the id is gone afterwards, so the pending entry
+            // is the only thing that lets a later run (or app start) finish the delete if this attempt does not.
+            store.deleteAndQueueRemoteDelete(projectId, remoteId)
         }
+        publish()
+        remoteId?.let { launchRemoteDelete(it) }
         return true
     }
 

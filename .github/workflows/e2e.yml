@@ -1,0 +1,42 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/**
+      - ml/**
+      - infra/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/e2e.yml
+  pull_request:
+    paths:
+      - services/**
+      - ml/**
+      - infra/**
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/e2e.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      # The fixture generator renders the synthetic proxy with ffmpeg on the runner; the worker image has its own.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: uv sync --locked --no-build
+      # Builds the API and worker images, starts the whole stack on free ports and runs infra/e2e/test_pipeline.py.
+      - run: sh infra/e2e/run.sh

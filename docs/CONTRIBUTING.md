@@ -119,10 +119,29 @@ cd apps/client
 
 On macOS with Homebrew, point Gradle at JDK 21 with `export JAVA_HOME=/opt/homebrew/opt/openjdk@21`.
 
+## End-to-end pipeline test (`infra/e2e`)
+
+`infra/e2e/test_pipeline.py` acts as the desktop client against the real stack (Postgres, MinIO, API and the
+worker container): it registers a user, generates a synthetic proxy with `snipnet_ml.fixtures`, creates the video,
+uploads the proxy to the presigned URL, sets the court, starts the analysis, polls the job, fetches the
+prediction, compares it with the fixture's ground truth (segment precision/recall and frame accuracy with
+generous thresholds) and posts a final user segment set.
+
+```sh
+sh infra/e2e/run.sh
+```
+
+The script builds the images, starts the stack under its own Compose project name on free host ports (so it can
+run next to `make infra-up`), runs the test and removes the stack with its volumes afterwards. It needs Docker,
+uv and ffmpeg, and creates `infra/.env` if it is missing. Against an already running stack, set `E2E_API_URL`
+and run `uv run pytest infra/e2e`; without it the test is skipped. The regular `uv run pytest` does not collect
+this folder.
+
 ## CI
 
 GitHub Actions runs one workflow per area (`.github/workflows/api.yml`, `web.yml`, `python.yml`,
 `client.yml`). Each is filtered on its own folders plus the root files it depends on, and runs lint and tests.
+`e2e.yml` runs the end-to-end pipeline test above on every change to `services/**`, `ml/**` or `infra/**`.
 
 ## Pull requests
 

@@ -24,7 +24,7 @@ export const jobRoutes: FastifyPluginCallbackTypebox = (app, _options, done) => 
   app.post(
     '/videos/:id/analyze',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['jobs'],
         security,
@@ -88,7 +88,7 @@ export const jobRoutes: FastifyPluginCallbackTypebox = (app, _options, done) => 
   app.get(
     '/jobs/:id',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['jobs'],
         security,

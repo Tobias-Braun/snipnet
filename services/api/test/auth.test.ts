@@ -381,6 +381,18 @@ describe('auth routes', () => {
       expect(response.statusCode).toBe(401);
     });
 
+    it('answers 401 before validating the body of an unauthenticated request', async () => {
+      await newApp();
+      const response = await app.inject({
+        method: 'PATCH',
+        url: '/v1/me',
+        payload: { trainingConsent: 'yes' },
+      });
+
+      expect(response.statusCode).toBe(401);
+      expect(response.json()).toMatchObject({ error: { code: 'unauthorized' } });
+    });
+
     it('ignores fields other than trainingConsent', async () => {
       await newApp();
       const email = uniqueEmail();

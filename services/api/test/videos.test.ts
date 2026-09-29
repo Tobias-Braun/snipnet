@@ -460,6 +460,20 @@ describe('video routes', () => {
         401,
       );
     });
+
+    it('answers 401 before validating the body of an unauthenticated request', async () => {
+      const id = crypto.randomUUID();
+      const attempts = [
+        { method: 'POST', url: '/v1/videos', payload: { nonsense: true } },
+        { method: 'PUT', url: `/v1/videos/${id}/court`, payload: { nonsense: true } },
+        { method: 'POST', url: `/v1/videos/${id}/analyze`, payload: { nonsense: true } },
+      ] as const;
+      for (const attempt of attempts) {
+        const response = await app.inject(attempt);
+        expect(response.statusCode).toBe(401);
+        expect(response.json()).toMatchObject({ error: { code: 'unauthorized' } });
+      }
+    });
   });
 
   describe('PUT /v1/videos/:id/court', () => {

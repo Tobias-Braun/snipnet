@@ -51,7 +51,7 @@ export const segmentSetRoutes: FastifyPluginCallbackTypebox = (app, _options, do
   app.get(
     '/videos/:id/segment-sets',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['segment-sets'],
         security,
@@ -84,7 +84,7 @@ export const segmentSetRoutes: FastifyPluginCallbackTypebox = (app, _options, do
   app.get(
     '/segment-sets/:id',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['segment-sets'],
         security,
@@ -110,7 +110,7 @@ export const segmentSetRoutes: FastifyPluginCallbackTypebox = (app, _options, do
   app.post(
     '/videos/:id/segment-sets',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       bodyLimit: USER_SET_BODY_LIMIT,
       schema: {
         tags: ['segment-sets'],

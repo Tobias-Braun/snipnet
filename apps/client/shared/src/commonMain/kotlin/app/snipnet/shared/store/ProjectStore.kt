@@ -203,6 +203,27 @@ class ProjectStore(
         return remaining
     }
 
+    /**
+     * Remembers that the server video [remoteVideoId] of a deleted project still has to be deleted, for the signed-in
+     * user. Does nothing when nobody is signed in.
+     */
+    fun addPendingVideoDelete(remoteVideoId: String) {
+        val userId = currentUserId() ?: return
+        queries.insertPendingVideoDelete(userId, remoteVideoId)
+    }
+
+    /** The server videos the signed-in user still has to delete, oldest first. */
+    fun pendingVideoDeletes(): List<String> {
+        val userId = currentUserId() ?: return emptyList()
+        return queries.selectPendingVideoDeletes(userId).executeAsList()
+    }
+
+    /** Forgets a pending delete once the server confirmed it (204) or reported the video as gone (404). */
+    fun removePendingVideoDelete(remoteVideoId: String) {
+        val userId = currentUserId() ?: return
+        queries.deletePendingVideoDelete(userId, remoteVideoId)
+    }
+
     /** Marks the project as opened just now so it sorts to the top of the list. */
     fun markOpened(id: String) = queries.updateLastOpened(now(), id)
 

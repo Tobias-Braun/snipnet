@@ -81,6 +81,9 @@ class ImportPipeline(
     private var videos = mapOf<String, Video>()
     private var serverChecked = false
 
+    /** Remote video ids with a delete running right now, so [remove] and [refresh] never delete the same one twice. */
+    private val deletingRemote = mutableSetOf<String>()
+
     /**
      * Analyses requested while the import was still running, mapped to their `openWhenDone` flag. The import task
      * picks them up once its upload succeeded (or [finishTask] does, see there); failure, cancellation, [remove] and
@@ -131,6 +134,7 @@ class ImportPipeline(
             serverChecked = true
         }
         publish()
+        retryPendingDeletes(list)
         for (project in store.list()) {
             val video = project.remoteVideoId?.let { videos[it] } ?: continue
             if (video.status == VideoStatus.ANALYZING) {
@@ -207,24 +211,63 @@ class ImportPipeline(
         project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
         store.delete(projectId)
         publish()
-        project.remoteVideoId?.let { remoteId -> scope.launch { deleteRemoteWithRetry(remoteId) } }
+        project.remoteVideoId?.let { remoteId ->
+            // Persisted before the first attempt: the local row that knew the id is gone, so this entry is the only
+            // thing that lets a later run (or app start) finish the delete if this attempt does not.
+            store.addPendingVideoDelete(remoteId)
+            launchRemoteDelete(remoteId)
+        }
         return true
     }
 
-    /** Deletes the server video; while a job still holds it (409) the delete is repeated a bounded number of times. */
+    /** Starts [deleteRemoteWithRetry] for [remoteId] unless a delete of that video is already running. */
+    private fun launchRemoteDelete(remoteId: String) {
+        val started = synchronized(lock) { deletingRemote.add(remoteId) }
+        if (!started) return
+        scope.launch {
+            try {
+                deleteRemoteWithRetry(remoteId)
+            } finally {
+                synchronized(lock) { deletingRemote.remove(remoteId) }
+            }
+        }
+    }
+
+    /**
+     * Deletes the server video and takes it off the persisted pending list once the server confirmed it (204) or
+     * reported it as gone (404). While a job still holds the video (409) the delete is repeated a bounded number of
+     * times; any other failure (server or network down) or running out of attempts leaves the entry for the next
+     * [refresh].
+     */
     private suspend fun deleteRemoteWithRetry(remoteId: String) {
         var attempt = 0
         while (true) {
             try {
                 api.deleteVideo(remoteId)
+                store.removePendingVideoDelete(remoteId)
+                return
+            } catch (e: ApiError.NotFound) {
+                store.removePendingVideoDelete(remoteId)
                 return
             } catch (e: ApiError.Conflict) {
                 if (++attempt >= MAX_DELETE_ATTEMPTS) return
                 delay(maxPollIntervalMs)
             } catch (e: ApiError) {
-                // Already gone or unreachable: the local project is removed either way.
                 return
             }
+        }
+    }
+
+    /**
+     * Retries the persisted deletes, except for videos whose latest job is still queued or running in [list]: the
+     * server would answer 409 again, so those wait for a later refresh.
+     */
+    private fun retryPendingDeletes(list: List<Video>) {
+        val byId = list.associateBy { it.id }
+        for (remoteId in store.pendingVideoDeletes()) {
+            val job = byId[remoteId]?.latestJob
+            if (job != null && ProjectRow.isActive(job.status)) continue
+            launchRemoteDelete(remoteId)
         }
     }
 
@@ -479,7 +522,8 @@ class ImportPipeline(
             try {
                 discard(videoId)
             } catch (e: ApiError) {
-                // Unreachable server: the local project is removed either way, and there is nothing left to retry.
+                // Unreachable server or a job holds the video: kept on the pending list for the next refresh.
+                store.addPendingVideoDelete(videoId)
             }
         }
         throw CancellationException("The project was removed during the upload.")

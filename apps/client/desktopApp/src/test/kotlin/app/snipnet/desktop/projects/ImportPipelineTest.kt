@@ -71,6 +71,9 @@ class ImportPipelineTest {
     /** Number of upcoming `DELETE /v1/videos/v1` calls that answer 409, as the server does during a job. */
     private val deleteConflicts = AtomicInteger()
 
+    /** Makes `DELETE /v1/videos/v1` fail at the transport level, as when the machine is offline. */
+    @Volatile private var deleteOffline = false
+
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
     private val transcoder =
@@ -178,7 +181,9 @@ class ImportPipelineTest {
                     respond(videoJson(), HttpStatusCode.OK, json)
                 }
                 path == "/v1/videos/v1" && request.method == HttpMethod.Delete ->
-                    if (deleteConflicts.getAndDecrement() > 0) {
+                    if (deleteOffline) {
+                        throw java.io.IOException("offline")
+                    } else if (deleteConflicts.getAndDecrement() > 0) {
                         respond(
                             """{"error":{"code":"conflict","message":"job running"}}""",
                             HttpStatusCode.Conflict,
@@ -369,6 +374,98 @@ class ImportPipelineTest {
                 while (requests.count { it == "DELETE /v1/videos/v1" } < 3) kotlinx.coroutines.delay(10)
             }
             assertTrue(store.list().isEmpty())
+        }
+
+    private suspend fun awaitPendingDeletesEmpty(refreshWith: ImportPipeline) {
+        withTimeout(10_000) {
+            while (store.pendingVideoDeletes().isNotEmpty()) {
+                refreshWith.refresh()
+                kotlinx.coroutines.delay(20)
+            }
+        }
+    }
+
+    @Test
+    fun aRemovalThatKeepsGettingA409PastTheInMemoryWindowIsFinishedByALaterRefresh() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteConflicts.set(1_000)
+
+            assertTrue(pipeline.remove("p1"))
+
+            withTimeout(10_000) {
+                while (requests.count { it == "DELETE /v1/videos/v1" } < 30) kotlinx.coroutines.delay(10)
+            }
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+
+            deleteConflicts.set(0)
+            awaitPendingDeletesEmpty(pipeline)
+        }
+
+    @Test
+    fun aDeleteInterruptedByClosingTheAppIsResumedByANewPipelineOnTheSameStore() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteConflicts.set(1_000)
+            assertTrue(pipeline.remove("p1"))
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            pipeline.reset()
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+
+            deleteConflicts.set(0)
+            val restarted =
+                ImportPipeline(
+                    api = api,
+                    store = store,
+                    videoEngine = videoEngine,
+                    transcoder = transcoder,
+                    uploader = uploader,
+                    proxyDir = tmp.resolve("proxies"),
+                    dispatcher = Dispatchers.Default,
+                    pollIntervalMs = 5,
+                    maxPollIntervalMs = 20,
+                )
+            try {
+                awaitPendingDeletesEmpty(restarted)
+            } finally {
+                restarted.reset()
+            }
+        }
+
+    @Test
+    fun aDeleteThatFailsBecauseTheServerIsUnreachableIsRetriedOnTheNextRefresh() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteOffline = true
+
+            assertTrue(pipeline.remove("p1"))
+
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
+
+            deleteOffline = false
+            awaitPendingDeletesEmpty(pipeline)
+        }
+
+    @Test
+    fun aPendingDeleteBelongsToTheAccountThatRemovedTheProject() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteOffline = true
+            assertTrue(pipeline.remove("p1"))
+
+            signedIn = "u2"
+            assertEquals(emptyList(), store.pendingVideoDeletes())
+            signedIn = "u1"
+            assertEquals(listOf("v1"), store.pendingVideoDeletes())
         }
 
     @Test

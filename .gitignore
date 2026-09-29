@@ -31,4 +31,4 @@ __pycache__/
 .kotlin/
 build/
 local.properties
-.claude/worktrees
+.claude/worktreesinfra/models/

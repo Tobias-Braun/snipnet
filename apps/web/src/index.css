@@ -392,6 +392,78 @@ ol {
   font-size: 1.15rem;
 }
 
+.download-buttons {
+  margin-bottom: 40px;
+}
+
+.download .download-other {
+  margin: 16px 0 0;
+  font-size: 0.95rem;
+}
+
+.download-other a {
+  color: var(--net);
+  font-weight: 600;
+}
+
+.waitlist {
+  max-width: 480px;
+  margin: 0 auto;
+  text-align: left;
+}
+
+.waitlist label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.waitlist-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.waitlist input {
+  flex: 1 1 220px;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 2px solid var(--net);
+  background: var(--ink);
+  color: var(--net);
+  font: inherit;
+}
+
+.waitlist input:focus-visible,
+.waitlist button:focus-visible {
+  outline: 3px solid var(--net);
+  outline-offset: 2px;
+}
+
+.waitlist button {
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.waitlist button:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* Reserves the line so the layout does not jump when an error appears. */
+.waitlist .waitlist-error {
+  min-height: 1.6em;
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.download .waitlist-success {
+  margin: 0;
+  font-weight: 700;
+}
+
 .site-footer {
   padding: 32px 0;
   border-top: 1px solid var(--line);

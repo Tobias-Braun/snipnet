@@ -1,6 +1,8 @@
 import { useRef } from 'react';
 
+import { DownloadButtons } from './components/DownloadButtons.tsx';
 import { FilmstripHero } from './components/FilmstripHero.tsx';
+import { WaitlistForm } from './components/WaitlistForm.tsx';
 import { FEATURES, RELEASES_URL, REPO_URL, STEPS } from './content.ts';
 import { useScrollAnimations } from './useScrollAnimations.ts';
 
@@ -149,9 +151,8 @@ export function App() {
           <div className="container" data-reveal>
             <h2 id="download-title">Get your weekend back</h2>
             <p>Snipnet runs on your desktop, with new builds published on every release.</p>
-            <a className="button button-dark" href={RELEASES_URL}>
-              Download the latest release
-            </a>
+            <DownloadButtons />
+            <WaitlistForm />
           </div>
         </section>
       </main>

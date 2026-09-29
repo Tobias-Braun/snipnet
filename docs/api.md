@@ -43,26 +43,26 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 
 ## Public endpoints
 
-| Method & path | Body | Response |
-|---|---|---|
-| `GET /v1/health` | – | `200 { status: "ok", version }` |
-| `POST /v1/auth/register` | `{ email, password }` (password ≥ 8 chars) | `201 { token, user }`, `409 conflict`, `429 rate_limited` (rate limited per IP, 5 per minute) |
-| `POST /v1/auth/login` | `{ email, password }` | `200 { token, user }`, `401` |
-| `GET /v1/me` | – | `200 User` |
-| `PATCH /v1/me` | `{ trainingConsent }` | `200 User` |
-| `POST /v1/videos` | `{ filename, durationMs, width, height, fps, proxySizeBytes }` | `201 { video, upload: { url, method: "PUT", headers: {…}, expiresAt } }` |
-| `GET /v1/videos` | – | `200 { items: Video[] }` (own videos, newest first) |
-| `GET /v1/videos/:id` | – | `200 Video` |
-| `DELETE /v1/videos/:id` | – | `204` (deletes proxy object and rows); `409` while a job is `queued`/`running` |
-| `POST /v1/videos/:id/upload-complete` | – | `200 Video` (status `uploaded`); `409` if object missing or size mismatch |
-| `PUT /v1/videos/:id/court` | `Court` | `200 Video` |
-| `POST /v1/videos/:id/analyze` | `{}` | `202 Job`; `409` if not uploaded (`created`), court missing, or a job is queued/running. Videos in `analyzed` or `failed` status can be analyzed again, see "Re-analysis" |
-| `GET /v1/jobs/:id` | – | `200 Job` |
-| `GET /v1/videos/:id/segment-sets` | – | `200 { items: SegmentSet[] }` (oldest first) |
-| `GET /v1/segment-sets/:id` | – | `200 SegmentSet` |
-| `POST /v1/videos/:id/segment-sets` | `{ parentSetId, segments, editLog, isFinal }` | `201 SegmentSet` (kind `user`); `400 validation_error` if `parentSetId` is malformed, unknown, or belongs to another video |
-| `POST /v1/waitlist` | `{ email, source? }` | `202 {}` (idempotent, rate limited per IP) |
-| `GET /v1/admin/training-export?since=<iso>` | – | `200` NDJSON, one line per video with a final user set of a consenting user: `{ video, proxyUrl, prediction: SegmentSet, final: SegmentSet }` |
+| Method & path                               | Body                                                           | Response                                                                                                                                                                  |
+| ------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/health`                            | –                                                              | `200 { status: "ok", version }`                                                                                                                                           |
+| `POST /v1/auth/register`                    | `{ email, password }` (password ≥ 8 chars)                     | `201 { token, user }`, `409 conflict`, `429 rate_limited` (rate limited per IP, 5 per minute)                                                                             |
+| `POST /v1/auth/login`                       | `{ email, password }`                                          | `200 { token, user }`, `401`                                                                                                                                              |
+| `GET /v1/me`                                | –                                                              | `200 User`                                                                                                                                                                |
+| `PATCH /v1/me`                              | `{ trainingConsent }`                                          | `200 User`                                                                                                                                                                |
+| `POST /v1/videos`                           | `{ filename, durationMs, width, height, fps, proxySizeBytes }` | `201 { video, upload: { url, method: "PUT", headers: {…}, expiresAt } }`                                                                                                  |
+| `GET /v1/videos`                            | –                                                              | `200 { items: Video[] }` (own videos, newest first)                                                                                                                       |
+| `GET /v1/videos/:id`                        | –                                                              | `200 Video`                                                                                                                                                               |
+| `DELETE /v1/videos/:id`                     | –                                                              | `204` (deletes proxy object and rows); `409` while a job is `running` (a `queued` job is dropped with the video)                                                          |
+| `POST /v1/videos/:id/upload-complete`       | –                                                              | `200 Video` (status `uploaded`); `409` if object missing or size mismatch                                                                                                 |
+| `PUT /v1/videos/:id/court`                  | `Court`                                                        | `200 Video`                                                                                                                                                               |
+| `POST /v1/videos/:id/analyze`               | `{}`                                                           | `202 Job`; `409` if not uploaded (`created`), court missing, or a job is queued/running. Videos in `analyzed` or `failed` status can be analyzed again, see "Re-analysis" |
+| `GET /v1/jobs/:id`                          | –                                                              | `200 Job`                                                                                                                                                                 |
+| `GET /v1/videos/:id/segment-sets`           | –                                                              | `200 { items: SegmentSet[] }` (oldest first)                                                                                                                              |
+| `GET /v1/segment-sets/:id`                  | –                                                              | `200 SegmentSet`                                                                                                                                                          |
+| `POST /v1/videos/:id/segment-sets`          | `{ parentSetId, segments, editLog, isFinal }`                  | `201 SegmentSet` (kind `user`); `400 validation_error` if `parentSetId` is malformed, unknown, or belongs to another video                                                |
+| `POST /v1/waitlist`                         | `{ email, source? }`                                           | `202 {}` (idempotent, rate limited per IP)                                                                                                                                |
+| `GET /v1/admin/training-export?since=<iso>` | –                                                              | `200` NDJSON, one line per video with a final user set of a consenting user: `{ video, proxyUrl, prediction: SegmentSet, final: SegmentSet }`                             |
 
 ### Re-analysis
 
@@ -82,15 +82,15 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 
 ## Internal (worker) endpoints
 
-| Method & path | Body | Response |
-|---|---|---|
-| `POST /internal/jobs/claim` | `{ workerId }` | `200 { job, video, proxyUrl }` or `204` when queue empty. Claims oldest `queued` job (or a `running` job whose lease expired), sets `running`, increments `attempts`, lease 10 min. |
-| `POST /internal/jobs/:id/progress` | `{ workerId, attempt, progress }` | `204`, extends lease |
-| `POST /internal/jobs/:id/result` | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
-| `POST /internal/jobs/:id/fail` | `{ workerId, attempt, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
-| `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts. |
-| `POST /internal/videos/:id/court-suggestion` | `CourtSuggestion` or JSON `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running` |
-| `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or is leased to another worker |
+| Method & path                                     | Body                                                    | Response                                                                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /internal/jobs/claim`                       | `{ workerId }`                                          | `200 { job, video, proxyUrl }` or `204` when queue empty. Claims oldest `queued` job (or a `running` job whose lease expired), sets `running`, increments `attempts`, lease 10 min. |
+| `POST /internal/jobs/:id/progress`                | `{ workerId, attempt, progress }`                       | `204`, extends lease                                                                                                                                                                |
+| `POST /internal/jobs/:id/result`                  | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed`                                                                                                   |
+| `POST /internal/jobs/:id/fail`                    | `{ workerId, attempt, error, retryable }`               | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`)                                                                                                    |
+| `POST /internal/court-detection/claim`            | `{ workerId }`                                          | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts.    |
+| `POST /internal/videos/:id/court-suggestion`      | `CourtSuggestion` or JSON `null` (no net found)         | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running`   |
+| `POST /internal/videos/:id/court-suggestion/fail` | `{ workerId, error, retryable }`                        | `204`; retryable and `attempts < 3` → `queued`, else `failed`. `courtSuggestion` stays `null`. `409` when the task is not `running` or is leased to another worker                  |
 
 `progress`, `result` and `fail` carry the `workerId` that was sent to `claim` and the `attempt` (a positive integer),
 which is the `job.attempts` value the claim response returned. If the job is not `running`, its `worker_id` differs
@@ -145,9 +145,12 @@ job. The client re-uploads by creating a new video. An overwrite after the claim
 store cannot be reached during that check, the claim answers `500` and leaves the job as it was, without spending
 an attempt.
 
-`DELETE /v1/videos/:id` is refused with `409` while the video has a `queued` or `running` job, so a worker never
-loses its video mid-analysis; there is no cancel, the client retries once the job has succeeded or failed. The
-check runs under the video's row lock, so it cannot race with `analyze`. Should a job vanish anyway, the
+`DELETE /v1/videos/:id` is refused with `409` while the video has a `running` job, so a worker never loses its video
+mid-analysis; the client retries once the job has succeeded or failed. A job that is still `queued` has reached no
+worker, so the delete drops it together with the video (there is no separate cancel endpoint; without this, a video
+could not be deleted while no worker runs). Queued jobs are taken with `FOR UPDATE SKIP LOCKED`: one that a worker's
+claim holds at that moment is not dropped and answers `409` as well, and the whole delete is rolled back. The
+checks run under the video's row lock, so they cannot race with `analyze`. Should a job vanish anyway, the
 `/internal/jobs/:id/*` endpoints answer `404` and the worker drops it.
 
 ## Proxy format

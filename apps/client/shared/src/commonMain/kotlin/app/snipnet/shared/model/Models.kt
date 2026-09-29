@@ -188,11 +188,48 @@ data class AuthResponse(
 /** Error envelope returned with every non-2xx response. */
 @Serializable
 data class ApiErrorBody(
-    val error: ApiError,
+    val error: ApiErrorDetail,
 )
 
+/** Wire form of an error; the client surfaces it as the sealed `app.snipnet.shared.api.ApiError`. */
 @Serializable
-data class ApiError(
+data class ApiErrorDetail(
     val code: String,
     val message: String,
+)
+
+/** Presigned upload target returned by `POST /v1/videos`. */
+@Serializable
+data class UploadTarget(
+    val url: String,
+    val method: String,
+    val headers: Map<String, String>,
+    val expiresAt: String,
+)
+
+/** Response of `POST /v1/videos`. */
+@Serializable
+data class CreateVideoResponse(
+    val video: Video,
+    val upload: UploadTarget,
+)
+
+/** Request body of `POST /v1/videos`. */
+@Serializable
+data class CreateVideoRequest(
+    val filename: String,
+    val durationMs: Long,
+    val width: Int,
+    val height: Int,
+    val fps: Double,
+    val proxySizeBytes: Long,
+)
+
+/** One line of the admin training export (`GET /v1/admin/training-export`). */
+@Serializable
+data class TrainingExportItem(
+    val video: Video,
+    val proxyUrl: String,
+    val prediction: SegmentSet,
+    val final: SegmentSet,
 )

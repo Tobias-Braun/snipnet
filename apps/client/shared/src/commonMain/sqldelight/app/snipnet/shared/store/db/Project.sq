@@ -1,0 +1,49 @@
+-- Local projects. A project exists as soon as a video file is opened, before anything is uploaded, so
+-- remote_video_id, proxy_path and court_json are all optional. Structured values (court, draft segments) are
+-- stored as JSON text because they are always read and written as a whole.
+CREATE TABLE project (
+    id TEXT NOT NULL PRIMARY KEY,
+    original_path TEXT NOT NULL,
+    proxy_path TEXT,
+    remote_video_id TEXT,
+    court_json TEXT,
+    draft_segments_json TEXT,
+    created_at_ms INTEGER NOT NULL,
+    last_opened_ms INTEGER NOT NULL
+);
+
+CREATE INDEX project_last_opened ON project(last_opened_ms DESC);
+
+selectAll:
+SELECT * FROM project ORDER BY last_opened_ms DESC, created_at_ms DESC;
+
+selectById:
+SELECT * FROM project WHERE id = ?;
+
+selectByRemoteVideoId:
+SELECT * FROM project WHERE remote_video_id = ?;
+
+insert:
+INSERT INTO project(id, original_path, proxy_path, remote_video_id, court_json, draft_segments_json, created_at_ms, last_opened_ms)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+updateProxyPath:
+UPDATE project SET proxy_path = ? WHERE id = ?;
+
+updateRemoteVideoId:
+UPDATE project SET remote_video_id = ? WHERE id = ?;
+
+updateCourt:
+UPDATE project SET court_json = ? WHERE id = ?;
+
+updateDraft:
+UPDATE project SET draft_segments_json = ? WHERE id = ?;
+
+updateLastOpened:
+UPDATE project SET last_opened_ms = ? WHERE id = ?;
+
+deleteById:
+DELETE FROM project WHERE id = ?;
+
+deleteAll:
+DELETE FROM project;

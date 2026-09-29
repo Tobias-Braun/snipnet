@@ -25,10 +25,14 @@ const OS_LABELS: Record<DesktopOs, string> = {
   linux: 'Linux',
 };
 
-/** File name patterns of the installers each platform's build is expected to publish. */
+/**
+ * File name patterns of the installers each platform's build is expected to publish. The OS markers in the
+ * archive alternatives must stand alone, otherwise "darwin" would contain "win" and a macOS zip would be
+ * offered to Windows visitors.
+ */
 const ASSET_PATTERNS: Record<DesktopOs, RegExp> = {
-  mac: /\.(dmg|pkg)$|(mac|macos|osx|darwin).*\.(zip|tar\.gz)$/i,
-  windows: /\.(msi|exe)$|(win|windows).*\.zip$/i,
+  mac: /\.(dmg|pkg)$|(^|[^a-z])(mac|macos|osx|darwin)([^a-z]|$).*\.(zip|tar\.gz)$/i,
+  windows: /\.(msi|exe)$|(^|[^a-z])(win|win32|win64|windows)([^a-z0-9]|$).*\.zip$/i,
   linux: /\.(appimage|deb|rpm)$|linux.*\.(tar\.gz|zip)$/i,
 };
 

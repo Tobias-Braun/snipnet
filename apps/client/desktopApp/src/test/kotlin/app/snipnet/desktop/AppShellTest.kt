@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import java.awt.Rectangle
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -111,5 +112,36 @@ class WindowSettingsStoreTest {
         assertEquals(WindowSettings.DEFAULT.width, sanitized.width)
         assertEquals(WindowSettings.DEFAULT.height, sanitized.height)
         assertEquals(null, sanitized.x)
+    }
+
+    @Test
+    fun positionOnAnAttachedScreenIsKept() {
+        val screens = listOf(Rectangle(0, 0, 1920, 1080), Rectangle(1920, 0, 2560, 1440))
+        val onSecond = WindowSettings(width = 900f, height = 700f, x = 2000f, y = 100f)
+        assertEquals(onSecond, onSecond.visibleOn(screens))
+    }
+
+    @Test
+    fun positionOnADetachedScreenIsDropped() {
+        val screens = listOf(Rectangle(0, 0, 1920, 1080))
+        val settings = WindowSettings(width = 900f, height = 700f, x = 2000f, y = 100f, maximized = true)
+        assertEquals(settings.copy(x = null, y = null), settings.visibleOn(screens))
+    }
+
+    @Test
+    fun titleBarBarelyOnScreenIsTreatedAsUnreachable() {
+        val screens = listOf(Rectangle(0, 0, 1920, 1080))
+        assertEquals(null, WindowSettings(width = 900f, height = 700f, x = 1900f, y = 100f).visibleOn(screens).x)
+        assertEquals(null, WindowSettings(width = 900f, height = 700f, x = 100f, y = -500f).visibleOn(screens).y)
+    }
+
+    @Test
+    fun maximizingKeepsTheFloatingGeometry() {
+        val floating = WindowSettings(width = 900f, height = 700f, x = 40f, y = 60f)
+        val maximized = floating.withGeometry(width = 2560f, height = 1440f, x = 0f, y = 0f, maximized = true)
+        assertEquals(floating.copy(maximized = true), maximized)
+
+        val restored = maximized.withGeometry(width = 1000f, height = 750f, x = 50f, y = 70f, maximized = false)
+        assertEquals(WindowSettings(width = 1000f, height = 750f, x = 50f, y = 70f, maximized = false), restored)
     }
 }

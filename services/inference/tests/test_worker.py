@@ -213,7 +213,7 @@ def test_progress_rejected_with_409_aborts_the_model_run_without_fail(api: respx
     assert fail.call_count == 0
 
 
-def test_fail_rejected_with_409_is_dropped(api: respx.MockRouter) -> None:
+def test_fail_rejected_with_409_is_dropped(api: respx.MockRouter, caplog: pytest.LogCaptureFixture) -> None:
     api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
     api.get(PROXY_URL).respond(200, content=b"video-bytes")
     fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(409)
@@ -221,3 +221,7 @@ def test_fail_rejected_with_409_is_dropped(api: respx.MockRouter) -> None:
     assert make_worker(RecordingModel(error=RuntimeError("boom")), httpx.Client()).run_once() is True
 
     assert fail.call_count == 1
+    # A generic HTTP error on /fail is also swallowed, so the log is what shows the 409 was recognised as lease loss.
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("reclaimed before its failure could be reported" in message for message in messages)
+    assert not any("could not report failure" in message for message in messages)

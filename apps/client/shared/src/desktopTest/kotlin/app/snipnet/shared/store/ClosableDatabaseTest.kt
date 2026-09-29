@@ -43,7 +43,12 @@ class ClosableDatabaseTest {
         val driver = CloseCountingDriver(JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY))
         val db = closableDatabaseOn(driver)
 
-        assertTrue(db.database.projectQueries.selectOwnerless().executeAsList().isEmpty())
+        assertTrue(
+            db.database.projectQueries
+                .selectOwnerless()
+                .executeAsList()
+                .isEmpty(),
+        )
         assertEquals(0, driver.closeCalls)
         db.close()
     }

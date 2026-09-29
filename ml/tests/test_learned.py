@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from snipnet_ml import dataset as dataset_module
 from snipnet_ml import fixtures, load_model
 from snipnet_ml import labels as labels_module
 from snipnet_ml.dataset import (
@@ -115,6 +116,31 @@ def test_file_proxy_url_is_rejected_for_an_api_sourced_export(tmp_path) -> None:
     with pytest.raises(ValueError, match="unsupported proxy URL scheme 'file'"):
         download_proxy(secret.as_uri(), tmp_path / "copy.mp4")
     assert not (tmp_path / "copy.mp4").exists()
+
+
+def test_main_only_allows_file_proxy_urls_for_an_export_file(tmp_path, monkeypatch) -> None:
+    """The CLI decides the allowed schemes from where the export came from, so both sources are checked end to end."""
+    secret = tmp_path / "secret.txt"
+    secret.write_text("not a proxy")
+    line = local_file_export_line(secret)
+    monkeypatch.setenv("ADMIN_TOKEN", "test-token")
+    monkeypatch.setattr(dataset_module, "fetch_export", lambda *_: [line])
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="unsupported proxy URL scheme 'file'"):
+        dataset_module.main(["--api-url", "https://api.example.test", "--out", str(out)])
+    assert not out.exists()
+
+    # A local export file gets past the check; the build itself is stubbed out, only the chosen schemes matter here.
+    export = tmp_path / "export.ndjson"
+    export.write_text(line + "\n")
+    calls = []
+    monkeypatch.setattr(
+        dataset_module,
+        "build_dataset",
+        lambda entries, out_dir, config, allowed_schemes: calls.append(allowed_schemes) or out_dir / "dataset.json",
+    )
+    dataset_module.main(["--export", str(export), "--out", str(out)])
+    assert calls == [LOCAL_EXPORT_SCHEMES]
 
 
 def test_file_proxy_url_is_allowed_for_a_local_export(tmp_path) -> None:

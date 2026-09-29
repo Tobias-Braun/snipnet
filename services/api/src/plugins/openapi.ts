@@ -12,7 +12,14 @@ export const openapiPlugin = fp<{ version: string }>(
         openapi: '3.1.0',
         info: { title: 'Snipnet API', version: options.version },
         components: {
-          securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } },
+          securitySchemes: {
+            bearerAuth: { type: 'http', scheme: 'bearer' },
+            internalToken: {
+              type: 'http',
+              scheme: 'bearer',
+              description: 'Shared INTERNAL_TOKEN of the worker.',
+            },
+          },
         },
       },
     });

@@ -10,6 +10,7 @@ import { errorsPlugin } from './plugins/errors.js';
 import { openapiPlugin } from './plugins/openapi.js';
 import { generateRequestId, requestIdPlugin } from './plugins/request-id.js';
 import { storagePlugin } from './plugins/storage.js';
+import { internalRoutes } from './routes/internal.js';
 import { v1Routes } from './routes/index.js';
 import { ErrorResponse } from './schemas.js';
 
@@ -46,6 +47,10 @@ export async function buildApp(options: AppOptions) {
     prefix: '/v1',
     version: config.version,
     waitlistRateLimit: config.waitlistRateLimit,
+  });
+  await app.register(internalRoutes, {
+    prefix: '/internal',
+    internalToken: config.secrets.internalToken,
   });
 
   return app;

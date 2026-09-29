@@ -145,3 +145,20 @@ def test_throughput_is_at_least_20x_realtime(tmp_path, capsys) -> None:
     with capsys.disabled():
         print(f"\nfeature extraction throughput: {speed:.1f}x realtime ({elapsed:.2f}s for 120s of 480x270)")
     assert speed >= 20
+
+
+def test_wrappers_share_the_resampling_of_decode_frames(tmp_path) -> None:
+    from snipnet_ml.persons import decode_rgb_frames
+
+    video = tmp_path / "clip.mp4"
+    fixtures.generate_video(video, duration_s=3, seed=2)
+    gray = list(features.decode_gray_frames(video, 5.0))
+    rgb = list(decode_rgb_frames(video, 5.0))
+    assert [t for t, _ in gray] == [t for t, _ in rgb]
+    assert len(gray) >= 14
+    assert gray[0][1].ndim == 2
+    assert rgb[0][1].ndim == 3
+    assert rgb[0][1].shape[2] == 3
+    direct = list(features.decode_frames(video, 5.0, "gray"))
+    assert [t for t, _ in direct] == [t for t, _ in gray]
+    assert all(np.array_equal(a[1], b[1]) for a, b in zip(direct, gray, strict=True))

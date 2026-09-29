@@ -66,6 +66,13 @@ class SaveQueue(
     private val rejected = HashSet<String>()
 
     /**
+     * Projects whose last upload got a 2xx answer that could not be read, mapped to the parent set that upload used.
+     * The server most likely stored the set, so posting again would create a duplicate; the next flush first checks
+     * the server's sets and only uploads when the save is not among them.
+     */
+    private val unconfirmed = HashMap<String, String?>()
+
+    /**
      * Uploads the queued save of [projectId]. On success the store is updated first (new base set, drained edit
      * log, cleared queue) and then [onSaved] runs without suspending in between, so a caller that mirrors the store
      * in memory cannot see a half-updated state.
@@ -88,14 +95,20 @@ class SaveQueue(
                 project.remoteVideoId
                     ?: return@withLock FlushResult.Offline("The video is not uploaded yet.")
             try {
-                val parentSetId = save.parentSetId ?: latestSetId(remoteId)
-                // The set lookup suspends, so the account may have changed since the check above; the request
-                // would carry the new account's token.
-                if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
-                val created = upload(remoteId, save.copy(parentSetId = parentSetId))
-                val saved = FlushResult.Saved(created, store.markSaved(projectId, created.id, save))
+                val sent =
+                    if (projectId in unconfirmed) {
+                        val found = findStoredCopy(remoteId, save, unconfirmed.getValue(projectId))
+                        if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
+                        found ?: uploadNew(projectId, remoteId, save)
+                    } else {
+                        uploadNew(projectId, remoteId, save)
+                    }
+                unconfirmed -= projectId
+                val saved = FlushResult.Saved(sent, store.markSaved(projectId, sent.id, save))
                 onSaved(saved)
                 saved
+            } catch (e: NotOwnedException) {
+                FlushResult.Idle
             } catch (e: ApiError) {
                 if (e.isTemporary()) {
                     FlushResult.Offline(e.message.orEmpty())
@@ -111,6 +124,48 @@ class SaveQueue(
                 FlushResult.Rejected("Could not update the local project: ${e.message}")
             }
         }
+
+    /** Thrown when the account changed while a lookup was suspended; the save stays queued untouched. */
+    private class NotOwnedException : Exception()
+
+    /**
+     * Posts [save] as a new set. A 2xx answer that cannot be parsed means the set exists on the server, so the
+     * project is marked [unconfirmed] and the server's sets are checked right away; if that check cannot confirm the
+     * save (or fails), the error propagates as a failed attempt and the next flush verifies again instead of posting.
+     */
+    private suspend fun uploadNew(
+        projectId: String,
+        remoteId: String,
+        save: PendingSave,
+    ): SegmentSet {
+        val parentSetId = save.parentSetId ?: latestSetId(remoteId)
+        // The set lookup suspends, so the account may have changed since the check in flush; the request would
+        // carry the new account's token.
+        if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()
+        try {
+            return upload(remoteId, save.copy(parentSetId = parentSetId))
+        } catch (e: ApiError.MalformedResponse) {
+            if (e.status !in 200..299) throw e
+            unconfirmed[projectId] = parentSetId
+            // The upload suspended, so the account may have changed; the lookup would carry the new account's token.
+            // The project stays unconfirmed, so its owner's next flush does the check instead.
+            if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()
+            return findStoredCopy(remoteId, save, parentSetId) ?: throw e
+        }
+    }
+
+    /**
+     * The newest user set on the server if it carries the segments and parent of [save], else null. Only the newest
+     * set counts: an older one with the same content is an earlier save, not the one that just went out.
+     */
+    private suspend fun findStoredCopy(
+        remoteVideoId: String,
+        save: PendingSave,
+        parentSetId: String?,
+    ): SegmentSet? {
+        val newest = loadSets(remoteVideoId).lastOrNull { it.kind == SegmentSetKind.USER } ?: return null
+        return newest.takeIf { it.segments == save.segments && it.parentSetId == parentSetId }
+    }
 
     private suspend fun latestSetId(remoteVideoId: String): String? {
         val sets = loadSets(remoteVideoId)

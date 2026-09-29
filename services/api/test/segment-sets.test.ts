@@ -210,6 +210,37 @@ describe('segment set routes', () => {
       });
     });
 
+    it('stores edit log snapshots without a confidence as null, keeping the set readable', async () => {
+      const user = await newUser();
+      const { videoId, predictionId } = await seedVideo(user.id);
+      const response = await save(user.auth, videoId, {
+        parentSetId: predictionId,
+        segments,
+        editLog: [
+          { op: 'add', atMs: 1, before: [], after: [{ startMs: 1000, endMs: 2000, label: 'rally' }] },
+        ],
+        isFinal: false,
+      });
+      expect(response.statusCode).toBe(201);
+      const created = response.json<SegmentSetBody>();
+      expect(created.editLog).toEqual([
+        {
+          op: 'add',
+          atMs: 1,
+          before: [],
+          after: [{ startMs: 1000, endMs: 2000, label: 'rally', confidence: null }],
+        },
+      ]);
+
+      const list = await app.inject({
+        method: 'GET',
+        url: `/v1/videos/${videoId}/segment-sets`,
+        headers: user.auth,
+      });
+      expect(list.statusCode).toBe(200);
+      expect(list.json<{ items: SegmentSetBody[] }>().items.map((item) => item.id)).toContain(created.id);
+    });
+
     it('accepts an empty segment list', async () => {
       const user = await newUser();
       const { videoId, predictionId } = await seedVideo(user.id);

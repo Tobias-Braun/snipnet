@@ -3,7 +3,7 @@ import Type from 'typebox';
 
 import { AppError } from '../errors.js';
 import { SegmentSet } from '../schemas.js';
-import { assertValidSegments, SegmentInput, serializeSegments } from '../segments.js';
+import { assertValidSegments, normalizeSegments, SegmentInput, serializeSegments } from '../segments.js';
 import { toSegmentSet } from '../serialize.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -172,7 +172,17 @@ export const segmentSetRoutes: FastifyPluginCallbackTypebox = (app, _options, do
             kind: 'user',
             parent_set_id: parent.id,
             segments: serializeSegments(segments),
-            edit_log: editLog === null ? null : JSON.stringify(editLog),
+            edit_log:
+              editLog === null
+                ? null
+                : JSON.stringify(
+                    editLog.map((op) => ({
+                      op: op.op,
+                      atMs: op.atMs,
+                      before: normalizeSegments(op.before),
+                      after: normalizeSegments(op.after),
+                    })),
+                  ),
             is_final: isFinal,
           })
           .returningAll()

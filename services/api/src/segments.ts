@@ -53,14 +53,21 @@ export function assertValidSegments(
   }
 }
 
-/** Serializes segments for the jsonb column, making an absent confidence explicit as `null`. */
+/**
+ * Brings request segments into the stored and returned `Segment` shape, making an absent confidence explicit as
+ * `null`. The response schema requires `confidence`, so anything stored without it would fail to serialize on
+ * every later read.
+ */
+export function normalizeSegments(segments: readonly SegmentInputType[]) {
+  return segments.map((s) => ({
+    startMs: s.startMs,
+    endMs: s.endMs,
+    label: 'rally' as const,
+    confidence: s.confidence ?? null,
+  }));
+}
+
+/** Serializes segments for the jsonb column in their normalized shape. */
 export function serializeSegments(segments: readonly SegmentInputType[]): string {
-  return JSON.stringify(
-    segments.map((s) => ({
-      startMs: s.startMs,
-      endMs: s.endMs,
-      label: 'rally',
-      confidence: s.confidence ?? null,
-    })),
-  );
+  return JSON.stringify(normalizeSegments(segments));
 }

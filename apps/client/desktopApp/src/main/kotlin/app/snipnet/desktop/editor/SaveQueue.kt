@@ -199,11 +199,15 @@ class SaveQueue(
     }
 
     /**
-     * Waits for a flush of [projectId] that is running right now. A flush of another project cannot touch this
-     * project's store entry, and waiting on it could take a full request timeout. An editor calls it after [attach] and before it reads its project
-     * from the store: a background flush that started before the attach may still update the store (new base set,
-     * drained edit log, cleared queue), and an editor that read the project earlier would keep the stale parent and
-     * post edit log entries that were already saved.
+     * Waits for a flush of [projectId] that is running right now. An editor calls it after [attach] and before it
+     * reads its project from the store: a background flush that started before the attach may still update the store
+     * (new base set, drained edit log, cleared queue), and an editor that read the project earlier would keep the
+     * stale parent and post edit log entries that were already saved.
+     *
+     * A flush of another project is not waited for: it cannot touch this project's store entry, and against a
+     * hanging server it can take two full request timeouts. A background flush of this project that is still queued
+     * on the mutex is harmless too, because it publishes its project before it checks [attached] and so either sees
+     * the attach and gives up, or is seen here and waited for.
      */
     suspend fun settle(projectId: String) {
         flushing.first { it != projectId }

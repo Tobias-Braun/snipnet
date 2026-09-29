@@ -124,6 +124,31 @@ class SaveQueueRebaseTest {
             assertEquals(listOf(secondOp), project?.draftEditLog)
         }
 
+    /**
+     * A local failure right after the stored set was recorded (here the editor callback, standing in for the store
+     * write of the rebased save) must not make the next flush post the newer save with its old parent.
+     */
+    @Test
+    fun aLocalFailureBeforeTheRebaseIsQueuedIsConfirmedAgainOnTheNextFlush() =
+        runTest {
+            sendFirstWithoutConfirmation()
+            saveAgain()
+            uploadFailure = null
+
+            val failed = queue.flush("p1", onSaved = { throw IllegalStateException("disk full") })
+            assertTrue(failed is FlushResult.Rejected)
+            assertEquals(1, uploaded.size)
+
+            val result = queue.flush("p1")
+
+            assertTrue(result is FlushResult.Saved)
+            assertEquals(2, uploaded.size)
+            assertEquals("stored-1", uploaded.last().parentSetId)
+            assertEquals(second.segments, uploaded.last().segments)
+            assertNull(store.get("p1")?.pendingSave)
+            assertEquals("stored-2", store.get("p1")?.baseSetId)
+        }
+
     @Test
     fun theSameSaveIsStillConfirmedWithoutAnotherUpload() =
         runTest {

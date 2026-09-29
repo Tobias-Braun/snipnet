@@ -177,12 +177,17 @@ class SaveQueue(
         val found = findStoredCopy(remoteId, unsure.sent, unsure.sent.parentSetId)
         if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()
         if (found == null) return null
-        unconfirmed -= projectId
         val saved = FlushResult.Saved(found, store.markSaved(projectId, found.id, unsure.queued))
         onSaved(saved)
-        if (queued == unsure.queued) return Confirmed(saved, null)
-        val rebased = rebase(queued, unsure.queued, found.id)
-        store.setPendingSave(projectId, rebased)
+        val rebased =
+            if (queued == unsure.queued) {
+                null
+            } else {
+                rebase(queued, unsure.queued, found.id).also { store.setPendingSave(projectId, it) }
+            }
+        // Cleared only once the store continues from the found set: after a local failure in between, the next flush
+        // must confirm again, since posting the queued save as it is would duplicate the set or orphan the newer one.
+        unconfirmed -= projectId
         return Confirmed(saved, rebased)
     }
 

@@ -37,3 +37,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
       # `check` runs ktlint on every source set and the unit tests of all modules.
       - run: ./gradlew check --stacktrace
+      # Runs the packaged app image's own jlink runtime (which lacks modules the full JDK has) against SQLite and the
+      # FFmpeg natives, so a stale `modules(...)` list in desktopApp/build.gradle.kts fails CI.
+      - run: bash desktopApp/packaging/smoke/smoke-test.sh

@@ -120,9 +120,11 @@ class DummyModel:
 
 
 def load_model(name: str) -> RallyModel:
-    """Resolve the ``MODEL`` setting (``heuristic`` or ``dummy``, or an exact model version) to an implementation.
+    """Resolve the ``MODEL`` setting (``heuristic``, ``dummy`` or ``learned``, or an exact model version).
 
-    The heuristic parameters can be overridden with a YAML file named by ``HEURISTIC_PARAMS``.
+    The heuristic parameters can be overridden with a YAML file named by ``HEURISTIC_PARAMS``. The learned model is
+    loaded from the directory named by ``MODEL_DIR`` (a model directory, or a folder of ``learned-v1.<n>`` builds
+    of which the newest is used); the directory is never part of the repository.
     """
     if name in ("dummy", DummyModel.version):
         return DummyModel()
@@ -133,4 +135,15 @@ def load_model(name: str) -> RallyModel:
     if name in ("heuristic", HEURISTIC_VERSION):
         params_file = os.environ.get("HEURISTIC_PARAMS")
         return HeuristicModel(HeuristicParams.from_yaml(params_file) if params_file else None)
+    if name == "learned" or name.startswith("learned-v1."):
+        model_dir = os.environ.get("MODEL_DIR")
+        if not model_dir:
+            raise ValueError("MODEL_DIR must point at the trained model directory to use the learned model")
+        # Imported lazily: the learned model pulls in torch, which the other models do not need at load time.
+        from snipnet_ml.learned import LearnedModel
+
+        model = LearnedModel(model_dir)
+        if name != "learned" and name != model.version:
+            raise ValueError(f"MODEL_DIR holds {model.version}, not {name}")
+        return model
     raise ValueError(f"unknown model {name!r}")

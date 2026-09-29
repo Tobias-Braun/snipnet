@@ -48,6 +48,12 @@ private class AnalysisFailedException(
  * [retry] re-derives what is still missing (proxy, upload, analysis) from the stores instead of replaying state, so
  * it also recovers an import that was interrupted by closing the app.
  *
+ * Server deletes are bound to the account that started them: the signed-in user's id is captured when a delete is
+ * queued or launched and passed to the store explicitly, and the request is skipped once [currentUserId] no longer
+ * returns it, because the API would send it with the new account's token. A skipped delete stays on the pending list
+ * of its own account and goes out when that account signs in again.
+ *
+ * @param currentUserId the id of the signed-in user, or null when nobody is; read on every check.
  * @param onAnalyzed called on [dispatcher] when an analysis started with `openWhenDone` succeeded, to open the editor.
  * @param pollIntervalMs first job poll delay, also used again whenever the job's progress moved.
  * @param maxPollIntervalMs upper bound of the backoff applied while the job's progress stands still.
@@ -59,6 +65,7 @@ class ImportPipeline(
     private val transcoder: ProxyTranscoder,
     private val uploader: ProxyUploader,
     private val proxyDir: Path,
+    private val currentUserId: () -> String?,
     private val onAnalyzed: (Project) -> Unit = {},
     private val dispatcher: CoroutineDispatcher = Dispatchers.Main,
     private val pollIntervalMs: Long = 2_000,
@@ -210,25 +217,29 @@ class ImportPipeline(
         }
         project.proxyPath?.let { runCatching { Files.deleteIfExists(Path.of(it)) } }
         val remoteId = project.remoteVideoId
+        val userId = currentUserId()
         if (remoteId == null) {
             store.delete(projectId)
         } else {
             // Deleted and queued atomically: the local row that knew the id is gone afterwards, so the pending entry
             // is the only thing that lets a later run (or app start) finish the delete if this attempt does not.
-            store.deleteAndQueueRemoteDelete(projectId, remoteId)
+            store.deleteAndQueueRemoteDelete(projectId, remoteId, userId)
         }
         publish()
-        remoteId?.let { launchRemoteDelete(it) }
+        if (remoteId != null && userId != null) launchRemoteDelete(remoteId, userId)
         return true
     }
 
-    /** Starts [deleteRemoteWithRetry] for [remoteId] unless a delete of that video is already running. */
-    private fun launchRemoteDelete(remoteId: String) {
+    /** Starts [deleteRemoteWithRetry] for [remoteId] of [userId] unless a delete of that video is already running. */
+    private fun launchRemoteDelete(
+        remoteId: String,
+        userId: String,
+    ) {
         val started = synchronized(lock) { deletingRemote.add(remoteId) }
         if (!started) return
         scope.launch {
             try {
-                deleteRemoteWithRetry(remoteId)
+                deleteRemoteWithRetry(remoteId, userId)
             } finally {
                 synchronized(lock) { deletingRemote.remove(remoteId) }
             }
@@ -239,17 +250,21 @@ class ImportPipeline(
      * Deletes the server video and takes it off the persisted pending list once the server confirmed it (204) or
      * reported it as gone (404). While a job still holds the video (409) the delete is repeated a bounded number of
      * times; any other failure (server or network down) or running out of attempts leaves the entry for the next
-     * [refresh].
+     * [refresh]. Nothing is sent once the signed-in account is not [userId] any more.
      */
-    private suspend fun deleteRemoteWithRetry(remoteId: String) {
+    private suspend fun deleteRemoteWithRetry(
+        remoteId: String,
+        userId: String,
+    ) {
         var attempt = 0
         while (true) {
+            if (currentUserId() != userId) return
             try {
                 api.deleteVideo(remoteId)
-                store.removePendingVideoDelete(remoteId)
+                store.removePendingVideoDelete(remoteId, userId)
                 return
             } catch (e: ApiError.NotFound) {
-                store.removePendingVideoDelete(remoteId)
+                store.removePendingVideoDelete(remoteId, userId)
                 return
             } catch (e: ApiError.Conflict) {
                 if (++attempt >= MAX_DELETE_ATTEMPTS) return
@@ -266,10 +281,11 @@ class ImportPipeline(
      */
     private fun retryPendingDeletes(list: List<Video>) {
         val byId = list.associateBy { it.id }
+        val userId = currentUserId() ?: return
         for (remoteId in store.pendingVideoDeletes()) {
             val job = byId[remoteId]?.latestJob
             if (job != null && ProjectRow.isActive(job.status)) continue
-            launchRemoteDelete(remoteId)
+            launchRemoteDelete(remoteId, userId)
         }
     }
 
@@ -480,8 +496,9 @@ class ImportPipeline(
                     size,
                 )
             // Uncancellable so that a cancelled task still receives the created video's id and can clean it up.
+            val userId = currentUserId()
             val created = withContext(NonCancellable) { api.createVideo(request) }
-            abandonIfRemoved(project.id, created.video.id)
+            abandonIfRemoved(project.id, created.video.id, userId)
             store.setRemoteVideoId(project.id, created.video.id)
             synchronized(lock) { targets[project.id] = created.upload }
             remember(created.video)
@@ -514,18 +531,27 @@ class ImportPipeline(
      * would go to a deleted row and the server would keep a `created` video nobody deletes. The project is therefore
      * checked once the video exists; when it is gone the video is deleted right away (uncancellably, as the task is
      * already cancelled) and the task ends as cancelled.
+     *
+     * [userId] is the account that was signed in when the video was created. If another account is signed in now the
+     * DELETE is not sent (it would carry the wrong token); the video is only queued under [userId], so it is deleted
+     * when that account signs in again.
      */
     private suspend fun abandonIfRemoved(
         projectId: String,
         videoId: String,
+        userId: String?,
     ) {
         if (store.get(projectId) != null) return
         withContext(NonCancellable) {
-            try {
-                discard(videoId)
-            } catch (e: ApiError) {
-                // Unreachable server or a job holds the video: kept on the pending list for the next refresh.
-                store.addPendingVideoDelete(videoId)
+            if (userId != null && currentUserId() == userId) {
+                try {
+                    discard(videoId)
+                } catch (e: ApiError) {
+                    // Unreachable server or a job holds the video: kept on the pending list for the next refresh.
+                    store.addPendingVideoDelete(videoId, userId)
+                }
+            } else {
+                store.addPendingVideoDelete(videoId, userId)
             }
         }
         throw CancellationException("The project was removed during the upload.")

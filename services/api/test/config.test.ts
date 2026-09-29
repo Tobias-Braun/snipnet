@@ -73,6 +73,36 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...required, API_PORT: value })).toThrow(/API_PORT/);
   });
 
+  it('defaults to no CORS origins, no proxy trust and 10 waitlist requests per minute', () => {
+    expect(loadConfig(required)).toMatchObject({
+      webOrigins: [],
+      trustProxy: false,
+      waitlistRateLimit: { max: 10, windowMs: 60_000 },
+    });
+  });
+
+  it('parses the web origins, proxy trust and waitlist limit', () => {
+    const config = loadConfig({
+      ...required,
+      WEB_ORIGIN: 'https://snipnet.app/, http://localhost:8080',
+      TRUST_PROXY: 'true',
+      WAITLIST_RATE_LIMIT_MAX: '3',
+      WAITLIST_RATE_LIMIT_WINDOW_SECONDS: '30',
+    });
+
+    expect(config).toMatchObject({
+      webOrigins: ['https://snipnet.app', 'http://localhost:8080'],
+      trustProxy: true,
+      waitlistRateLimit: { max: 3, windowMs: 30_000 },
+    });
+  });
+
+  it.each(['0', 'abc', '-2'])('rejects WAITLIST_RATE_LIMIT_MAX=%s', (value) => {
+    expect(() => loadConfig({ ...required, WAITLIST_RATE_LIMIT_MAX: value })).toThrow(
+      /WAITLIST_RATE_LIMIT_MAX/,
+    );
+  });
+
   it('rejects an unknown log level and an unsafe schema name', () => {
     expect(() => loadConfig({ ...required, LOG_LEVEL: 'loud' })).toThrow(/LOG_LEVEL/);
     expect(() => loadConfig({ ...required, PGSCHEMA: 'a; drop table x' })).toThrow(/PGSCHEMA/);

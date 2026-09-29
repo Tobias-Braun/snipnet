@@ -1,3 +1,4 @@
+import cors from '@fastify/cors';
 import fastifyRateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyServerOptions } from 'fastify';
 import type { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
@@ -27,17 +28,23 @@ export async function buildApp(options: AppOptions) {
     genReqId: generateRequestId,
     // Closes idle keep-alive connections on shutdown so `close()` does not wait for clients to hang up.
     forceCloseConnections: 'idle',
+    trustProxy: config.trustProxy,
   }).withTypeProvider<TypeBoxTypeProvider>();
 
   app.addSchema(ErrorResponse);
   await app.register(requestIdPlugin);
   await app.register(errorsPlugin);
+  await app.register(cors, { origin: config.webOrigins, methods: ['GET', 'POST', 'OPTIONS'] });
   await app.register(dbPlugin, { database: config.database });
   await app.register(authPlugin, { secret: config.secrets.jwt });
   // Opt-in: only routes that set `config.rateLimit` are limited, the rest stay unaffected.
   await app.register(fastifyRateLimit, { global: false });
   await app.register(openapiPlugin, { version: config.version });
-  await app.register(v1Routes, { prefix: '/v1', version: config.version });
+  await app.register(v1Routes, {
+    prefix: '/v1',
+    version: config.version,
+    waitlistRateLimit: config.waitlistRateLimit,
+  });
 
   return app;
 }

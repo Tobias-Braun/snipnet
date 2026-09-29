@@ -20,6 +20,12 @@ export interface AppConfig {
   database: DatabaseConfig;
   /** Secrets for the auth, worker and admin endpoints that later issues implement. */
   secrets: { jwt: string; internalToken: string; adminToken: string };
+  /** Origins of the landing page that may call the public endpoints cross-origin; empty disables CORS. */
+  webOrigins: string[];
+  /** Read the client IP from `X-Forwarded-For`; only enable behind a reverse proxy that sets it. */
+  trustProxy: boolean;
+  /** Per-IP limit of the unauthenticated waitlist endpoint. */
+  waitlistRateLimit: { max: number; windowMs: number };
 }
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -33,6 +39,12 @@ const port = z
   .regex(/^\d+$/, 'must be an integer between 0 and 65535')
   .transform(Number)
   .pipe(z.number().int().min(0).max(65535));
+
+const positiveInt = z
+  .string()
+  .regex(/^\d+$/, 'must be a positive integer')
+  .transform(Number)
+  .pipe(z.number().int().min(1));
 
 const envSchema = z.object({
   API_HOST: z.string().default('0.0.0.0'),
@@ -51,6 +63,10 @@ const envSchema = z.object({
   JWT_SECRET: secret,
   INTERNAL_TOKEN: secret,
   ADMIN_TOKEN: secret,
+  WEB_ORIGIN: z.string().optional(),
+  TRUST_PROXY: z.enum(['true', 'false']).default('false'),
+  WAITLIST_RATE_LIMIT_MAX: positiveInt.default(10),
+  WAITLIST_RATE_LIMIT_WINDOW_SECONDS: positiveInt.default(60),
 });
 
 /**
@@ -85,6 +101,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       schema: values.PGSCHEMA,
     },
     secrets: { jwt: values.JWT_SECRET, internalToken: values.INTERNAL_TOKEN, adminToken: values.ADMIN_TOKEN },
+    webOrigins: (values.WEB_ORIGIN ?? '')
+      .split(',')
+      .map((origin) => origin.trim().replace(/\/+$/, ''))
+      .filter((origin) => origin !== ''),
+    trustProxy: values.TRUST_PROXY === 'true',
+    waitlistRateLimit: {
+      max: values.WAITLIST_RATE_LIMIT_MAX,
+      windowMs: values.WAITLIST_RATE_LIMIT_WINDOW_SECONDS * 1000,
+    },
   };
 }
 

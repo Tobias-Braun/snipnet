@@ -34,3 +34,4 @@ known-first-party = ["snipnet_ml", "snipnet_inference"]
 testpaths = ["ml/tests", "services/inference/tests"]
 # importlib mode lets both members keep plain `tests/` folders without clashing module names.
 addopts = ["--import-mode=importlib", "--strict-markers"]
+markers = ["slow: benchmarks and other long-running tests, deselect with -m 'not slow'"]

@@ -82,7 +82,12 @@ class DummyModel:
 
     def predict(self, video_path: Path, court: Court | None, progress: ProgressCallback) -> Prediction:
         progress(0.0)
-        duration_ms = probe_duration_ms(video_path)
+        # Imported lazily so that importing the model interface stays free of the feature stack (av, librosa).
+        # The origin-relative duration is used instead of the raw ffprobe value, which is the absolute end time
+        # for proxies written with a timestamp offset and would misplace the segment and stretch the score curve.
+        from snipnet_ml.heuristic import video_duration_ms
+
+        duration_ms = video_duration_ms(video_path)
         start_ms = duration_ms // 3
         end_ms = duration_ms * 2 // 3
         # For a video of a few milliseconds the middle third is empty, and docs/api.md requires startMs < endMs.

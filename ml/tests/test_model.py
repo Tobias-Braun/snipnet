@@ -31,6 +31,38 @@ def nine_second_video(tmp_path: Path) -> Path:
 
 
 @needs_ffmpeg
+def test_dummy_model_uses_the_origin_relative_duration_of_an_offset_proxy(
+    nine_second_video: Path, tmp_path: Path
+) -> None:
+    shifted = tmp_path / "shifted.mkv"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(nine_second_video),
+            "-c",
+            "copy",
+            "-output_ts_offset",
+            "3.7",
+            str(shifted),
+        ],
+        check=True,
+    )
+
+    prediction = DummyModel().predict(shifted, None, lambda _: None)
+
+    # The declared duration is 12.7 s but the real content is 9 s, so the middle third is 3 s..6 s.
+    [segment] = prediction.segments
+    assert segment.start_ms == pytest.approx(3000, abs=300)
+    assert segment.end_ms == pytest.approx(6000, abs=300)
+    assert prediction.scores is not None
+    assert len(prediction.scores.values) == pytest.approx(9, abs=1)
+
+
+@needs_ffmpeg
 def test_dummy_model_returns_one_rally_over_the_middle_third(nine_second_video: Path) -> None:
     reported: list[float] = []
 

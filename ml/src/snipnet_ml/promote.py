@@ -48,7 +48,7 @@ class PromotionReport:
 
 
 def _rallies(prediction: Prediction) -> list[Rally]:
-    return [Rally(start_ms=s.start_ms, end_ms=s.end_ms) for s in prediction.segments]
+    return list(prediction.segments)
 
 
 def _mean(values: list[float]) -> float:

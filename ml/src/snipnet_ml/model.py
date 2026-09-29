@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from snipnet_ml.labels import Court, Rally
+
 ProgressCallback = Callable[[float], None]
 
 
@@ -15,32 +17,9 @@ class InvalidInputError(Exception):
     """The video cannot be analysed no matter how often it is retried (unreadable or zero-length media)."""
 
 
-@dataclass(frozen=True)
-class Roi:
-    x: float
-    y: float
-    width: float
-    height: float
+class Segment(Rally):
+    """A predicted rally: a labelled `Rally` plus the model's confidence, so it can go straight into the eval."""
 
-
-@dataclass(frozen=True)
-class Point:
-    x: float
-    y: float
-
-
-@dataclass(frozen=True)
-class Court:
-    """Court calibration in normalized image coordinates, as defined in docs/api.md."""
-
-    roi: Roi
-    net_point: Point
-
-
-@dataclass(frozen=True)
-class Segment:
-    start_ms: int
-    end_ms: int
     confidence: float | None = None
 
 

@@ -29,7 +29,8 @@ from pathlib import Path
 import numpy as np
 from scipy import ndimage
 
-from snipnet_ml.model import Court, InvalidInputError, Point, Roi
+from snipnet_ml.labels import Court, Point, Roi
+from snipnet_ml.model import InvalidInputError
 
 # Suggestions at or above this confidence are safe to apply without asking the user; below it the client shows
 # them as a hint at most. Part of the API contract (docs/api.md).
@@ -195,7 +196,7 @@ def _score_component(xs: np.ndarray, ys: np.ndarray, size: tuple[int, int]) -> N
         * _clamp01((coverage - 0.2) / 0.6)
         * _clamp01(1 - math.hypot(nx - 0.5, ny - 0.5) / _CENTER_TOLERANCE)
     )
-    return NetDetection(Point(nx, ny), diameter, 2 * semi_minor / width, confidence)
+    return NetDetection(Point(x=nx, y=ny), diameter, 2 * semi_minor / width, confidence)
 
 
 def detect_net(image: np.ndarray) -> NetDetection | None:
@@ -236,7 +237,7 @@ def suggest_from_frames(frames: list[np.ndarray]) -> CourtSuggestion | None:
         return None
     xs = np.array([d.net_point.x for d in found])
     ys = np.array([d.net_point.y for d in found])
-    net = Point(float(np.median(xs)), float(np.median(ys)))
+    net = Point(x=float(np.median(xs)), y=float(np.median(ys)))
     diameter = float(np.median([d.major for d in found]))
     spread = float(max(xs.max() - xs.min(), ys.max() - ys.min()))
     agreement = _clamp01(1 - spread / _MAX_SAMPLE_SPREAD)

@@ -9,8 +9,8 @@ from snipnet_ml import HeuristicModel, HeuristicParams, InvalidInputError, fixtu
 from snipnet_ml.eval import evaluate
 from snipnet_ml.features import FeatureFrame
 from snipnet_ml.heuristic import build_segments, predict_from_features, viterbi_states
-from snipnet_ml.labels import Labels, Rally, save_labels
-from snipnet_ml.model import Court, DummyModel, Point, Prediction, Roi
+from snipnet_ml.labels import Court, Labels, Rally, save_labels
+from snipnet_ml.model import DummyModel, Prediction
 from snipnet_ml.predict import main as predict_main
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
@@ -19,12 +19,11 @@ SEEDS = (1, 2, 3, 4)
 
 
 def to_rallies(prediction: Prediction) -> list[Rally]:
-    return [Rally(start_ms=s.start_ms, end_ms=s.end_ms) for s in prediction.segments]
+    return list(prediction.segments)
 
 
 def model_court(labels: Labels) -> Court:
-    roi, net = labels.court.roi, labels.court.net_point
-    return Court(roi=Roi(roi.x, roi.y, roi.width, roi.height), net_point=Point(net.x, net.y))
+    return labels.court
 
 
 @pytest.fixture(scope="module")

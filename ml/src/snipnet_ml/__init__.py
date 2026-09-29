@@ -3,15 +3,13 @@
 from importlib.metadata import version
 
 from snipnet_ml.heuristic import HeuristicModel, HeuristicParams
+from snipnet_ml.labels import Court, Point, Rally, Roi
 from snipnet_ml.model import (
-    Court,
     DummyModel,
     InvalidInputError,
-    Point,
     Prediction,
     ProgressCallback,
     RallyModel,
-    Roi,
     ScoreCurve,
     Segment,
     load_model,
@@ -28,6 +26,7 @@ __all__ = [
     "Point",
     "Prediction",
     "ProgressCallback",
+    "Rally",
     "RallyModel",
     "Roi",
     "ScoreCurve",

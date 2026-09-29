@@ -17,9 +17,8 @@ from snipnet_ml.dataset import (
 )
 from snipnet_ml.embeddings import EmbeddingConfig
 from snipnet_ml.features import FeatureConfig
-from snipnet_ml.labels import Rally
+from snipnet_ml.labels import Court, Point, Rally, Roi
 from snipnet_ml.learned import LearnedModel, compute_window_features, next_version, resolve_model_dir
-from snipnet_ml.model import Court, Point, Roi
 from snipnet_ml.promote import compare, format_markdown
 from snipnet_ml.promote import main as promote_main
 from snipnet_ml.train import TrainConfig, train
@@ -181,7 +180,7 @@ def test_learned_model_predicts_rallies_on_a_video(pipeline) -> None:
     root, _, model_dir, plan, truth = pipeline
     video_id = plan["test"][0]
     labels = truth[video_id]
-    court = Court(roi=Roi(0.25, 0.2, 0.5, 0.6), net_point=Point(0.5, 0.5))
+    court = Court(roi=Roi(x=0.25, y=0.2, width=0.5, height=0.6), net_point=Point(x=0.5, y=0.5))
     model = LearnedModel(model_dir, cache_dir=root / "cache", device="cpu")
     assert model.version == "learned-v1.1"
 
@@ -193,8 +192,7 @@ def test_learned_model_predicts_rallies_on_a_video(pipeline) -> None:
     assert prediction.segments
     from snipnet_ml.eval import evaluate
 
-    rallies = [Rally(start_ms=s.start_ms, end_ms=s.end_ms) for s in prediction.segments]
-    assert evaluate(rallies, labels.rallies, labels.duration_ms).frame_accuracy > 0.8
+    assert evaluate(prediction.segments, labels.rallies, labels.duration_ms).frame_accuracy > 0.8
 
 
 @needs_ffmpeg

@@ -77,6 +77,23 @@ def test_prediction_shape_and_contract_invariants(clips) -> None:
 
 
 @needs_ffmpeg
+def test_progress_is_reported_repeatedly_during_extraction_and_never_decreases(clips) -> None:
+    video, labels = clips[1]
+    progress: list[float] = []
+    HeuristicModel().predict(video, model_court(labels), progress.append)
+
+    # 0.0 at the start, 0.9 and 1.0 at the end, and many calls from the frame decode in between.
+    assert len(progress) > 10
+    assert progress == sorted(progress)
+    assert progress[0] == 0.0
+    assert progress[-1] == 1.0
+    during_extraction = progress[1:-2]
+    assert during_extraction
+    assert all(0.0 < p <= 0.9 for p in during_extraction)
+    assert during_extraction[-1] > 0.8
+
+
+@needs_ffmpeg
 def test_works_without_a_court(clips) -> None:
     video, _ = clips[1]
     prediction = HeuristicModel().predict(video, None, lambda _: None)

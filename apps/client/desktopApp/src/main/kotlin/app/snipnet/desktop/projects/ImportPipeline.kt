@@ -316,9 +316,10 @@ class ImportPipeline(
     }
 
     /**
-     * Registers the proxy with the server and uploads it. A video that already left `created` needs nothing. An
-     * unfinished one is only continued while its presigned URL is still known and valid; otherwise it is deleted and
-     * created anew, because the contract has no endpoint to fetch a fresh URL for an existing video.
+     * Registers the proxy with the server, uploads it and then sends a court that exists only locally. A video that
+     * already left `created` needs at most that court. An unfinished one is only continued while its presigned URL is
+     * still known and valid; otherwise it is deleted and created anew, because the contract has no endpoint to fetch a
+     * fresh URL for an existing video.
      */
     private suspend fun uploadProxy(
         project: Project,
@@ -330,6 +331,8 @@ class ImportPipeline(
         val existing = project.remoteVideoId?.let { fetchVideo(it) }
         if (existing != null && existing.status != VideoStatus.CREATED) {
             remember(existing)
+            // A retry after a failed court upload lands here, because the proxy itself is already on the server.
+            sendLocalCourt(project.id, existing)
             return
         }
         val known = synchronized(lock) { targets[project.id] }

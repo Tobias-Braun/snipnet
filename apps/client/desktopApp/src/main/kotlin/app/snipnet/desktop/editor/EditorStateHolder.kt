@@ -26,12 +26,15 @@ import app.snipnet.shared.editing.trimEnd
 import app.snipnet.shared.editing.trimStart
 import app.snipnet.shared.model.Segment
 import app.snipnet.shared.model.SegmentSet
+import app.snipnet.shared.model.SegmentSetKind
+import app.snipnet.shared.store.PendingSave
 import app.snipnet.shared.store.Project
 import app.snipnet.shared.store.ProjectStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Image
@@ -48,18 +51,25 @@ import kotlin.math.roundToLong
  * current segments are written to the project's local draft after each finished edit; the draft only holds the
  * accepted segments (the shape of the API), so segments rejected before a restart come back gone.
  *
- * @param loadPrediction fetches the newest prediction (segments and score curve) for a remote video id. An
- *   [ApiError] is treated like "no prediction", because the editor stays usable offline with the local draft.
+ * Saving goes through the [saveQueue]: [save] snapshots the current segments and the edit log as a
+ * [PendingSave] in the project store and uploads it as a new user segment set whose parent is the set the edits
+ * started from. When the API cannot be reached the snapshot stays queued and is retried every [retryDelayMs] while
+ * the editor is open (and by the queue itself afterwards); [EditorState.hasUnsavedChanges] drives the indicator.
+ *
+ * @param loadSets fetches all segment sets of a remote video, oldest first. An [ApiError] is treated like "no
+ *   sets", because the editor stays usable offline with the local draft.
  * @param now clock for the timestamps of edit log entries.
  */
 class EditorStateHolder(
     private val projectId: String,
     private val projectStore: ProjectStore,
     private val engine: VideoEngine,
-    private val loadPrediction: suspend (remoteVideoId: String) -> SegmentSet? = { null },
+    private val saveQueue: SaveQueue,
+    private val loadSets: suspend (remoteVideoId: String) -> List<SegmentSet> = { emptyList() },
     private val now: () -> Long = System::currentTimeMillis,
     dispatcher: CoroutineDispatcher = Dispatchers.Main,
     private val exporter: RallyExporter = FfmpegRallyExporter(),
+    private val retryDelayMs: Long = SaveQueue.RETRY_INTERVAL_MS,
 ) : StateHolder<EditorState>(EditorState(), dispatcher) {
     private var player: VideoPlayer? = null
 
@@ -73,7 +83,18 @@ class EditorStateHolder(
     private var trimTarget: Pair<Long, SegmentEdge>? = null
 
     init {
+        saveQueue.attach(projectId)
         scope.launch { load() }
+        scope.launch { retryQueuedSave() }
+    }
+
+    /** Tries the queued save again while it is only waiting for the server (a refused save is not retried). */
+    private suspend fun retryQueuedSave() {
+        while (true) {
+            delay(retryDelayMs)
+            val current = state.value
+            if (current.queued && current.syncError == null && !current.saving) flushQueuedSave()
+        }
     }
 
     private suspend fun load() {
@@ -90,19 +111,35 @@ class EditorStateHolder(
                 return
             }
             player = opened
-            val prediction = fetchPrediction(project)
-            val segments = project.draftSegments ?: prediction?.segments ?: emptyList()
+            val sets = fetchSets(project)
+            val prediction = sets.lastOrNull { it.kind == SegmentSetKind.PREDICTION }
+            val baseline = sets.lastOrNull { it.kind == SegmentSetKind.USER } ?: prediction
             val duration = opened.info.durationMs.coerceAtLeast(1)
-            val timeline = Timeline.fromSegments(duration, sanitizeSegments(duration, segments))
+            val draft = project.draftSegments
+            val timeline =
+                Timeline.fromSegments(duration, sanitizeSegments(duration, draft ?: baseline?.segments ?: emptyList()))
             update {
                 it.copy(
                     loading = false,
                     history = EditHistory(timeline),
                     info = opened.info,
                     scores = prediction?.scores,
+                    baseSetId =
+                        if (draft !=
+                            null
+                        ) {
+                            project.baseSetId ?: baseline?.id
+                        } else {
+                            baseline?.id ?: project.baseSetId
+                        },
+                    priorEditLog = if (draft != null) project.draftEditLog else emptyList(),
+                    savedSegments = baseline?.let { sanitizeSegments(duration, it.segments) },
+                    queued = project.pendingSave != null,
+                    savedFinal = baseline?.isFinal == true,
                 )
             }
             projectStore.markOpened(projectId)
+            if (project.pendingSave != null) scope.launch { flushQueuedSave() }
             startPlayerCollectors(opened)
             loadMedia(playbackSource(project), duration)
             opened.seek(0, exact = true)
@@ -112,12 +149,12 @@ class EditorStateHolder(
         }
     }
 
-    private suspend fun fetchPrediction(project: Project): SegmentSet? {
-        val remoteId = project.remoteVideoId ?: return null
+    private suspend fun fetchSets(project: Project): List<SegmentSet> {
+        val remoteId = project.remoteVideoId ?: return emptyList()
         return try {
-            loadPrediction(remoteId)
+            loadSets(remoteId)
         } catch (e: ApiError) {
-            null
+            emptyList()
         }
     }
 
@@ -238,7 +275,54 @@ class EditorStateHolder(
             EditorCommand.Undo to { changeHistory { it.undo() } },
             EditorCommand.Redo to { changeHistory { it.redo() } },
             EditorCommand.ToggleRalliesOnly to { update { it.copy(ralliesOnly = !it.ralliesOnly) } },
+            EditorCommand.Save to { save(markFinal = false) },
         )
+
+    /**
+     * Uploads the current segments as a new user segment set (`Save`), or as the final one (`Mark as final`). The
+     * snapshot is queued in the project store before the upload starts, so it survives a failed upload or a crash.
+     */
+    fun save(markFinal: Boolean) {
+        val current = state.value
+        val timeline = current.timeline ?: return
+        if (current.saving) return
+        persistDraft()
+        projectStore.setPendingSave(
+            projectId,
+            PendingSave(current.baseSetId, timeline.toApiSegments(), current.editLog, markFinal),
+        )
+        update { it.copy(queued = true, syncError = null) }
+        scope.launch { flushQueuedSave() }
+    }
+
+    private suspend fun flushQueuedSave() {
+        update { it.copy(saving = true) }
+        val result = saveQueue.flush(projectId, onSaved = ::applySaved)
+        val stillQueued = projectStore.get(projectId)?.pendingSave != null
+        update {
+            when (result) {
+                is FlushResult.Rejected -> it.copy(saving = false, queued = stillQueued, syncError = result.message)
+                else -> it.copy(saving = false, queued = stillQueued)
+            }
+        }
+    }
+
+    /**
+     * Continues from the set the server just accepted: it becomes the parent of the next save, and the history starts
+     * over so the edit log only holds what was done after it. Runs right after the store was updated, without
+     * suspending, so no edit can persist a stale draft in between.
+     */
+    private fun applySaved(saved: FlushResult.Saved) =
+        update {
+            it.copy(
+                baseSetId = saved.set.id,
+                priorEditLog = saved.remainingLog,
+                history = it.history?.let { history -> EditHistory(history.timeline) },
+                savedSegments = saved.set.segments,
+                savedFinal = saved.set.isFinal,
+                syncError = null,
+            )
+        }
 
     /** The segments an edit applies to: the selection, or the segment under the playhead when nothing is selected. */
     private fun Timeline.targetIds(): Set<Long> =
@@ -408,7 +492,7 @@ class EditorStateHolder(
     private fun persistDraft() {
         val segments = state.value.timeline?.toApiSegments() ?: return
         try {
-            projectStore.saveDraft(projectId, segments)
+            projectStore.saveDraft(projectId, segments, state.value.editLog)
             update { it.copy(saveError = null) }
         } catch (e: Exception) {
             update { it.copy(saveError = "Could not save your edits on this computer: ${e.message}") }
@@ -542,6 +626,7 @@ class EditorStateHolder(
 
     override fun close() {
         closed = true
+        saveQueue.detach(projectId)
         player?.close()
         super.close()
     }

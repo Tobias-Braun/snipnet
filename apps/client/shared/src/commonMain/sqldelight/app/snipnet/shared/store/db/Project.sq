@@ -8,6 +8,9 @@ CREATE TABLE project (
     remote_video_id TEXT,
     court_json TEXT,
     draft_segments_json TEXT,
+    base_set_id TEXT,
+    draft_edit_log_json TEXT,
+    pending_save_json TEXT,
     created_at_ms INTEGER NOT NULL,
     last_opened_ms INTEGER NOT NULL
 );
@@ -27,6 +30,9 @@ insert:
 INSERT INTO project(id, original_path, proxy_path, remote_video_id, court_json, draft_segments_json, created_at_ms, last_opened_ms)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
+selectWithPendingSave:
+SELECT id FROM project WHERE pending_save_json IS NOT NULL;
+
 updateProxyPath:
 UPDATE project SET proxy_path = ? WHERE id = ?;
 
@@ -37,7 +43,16 @@ updateCourt:
 UPDATE project SET court_json = ? WHERE id = ?;
 
 updateDraft:
-UPDATE project SET draft_segments_json = ? WHERE id = ?;
+UPDATE project SET draft_segments_json = ?, draft_edit_log_json = ? WHERE id = ?;
+
+updateBaseSet:
+UPDATE project SET base_set_id = ? WHERE id = ?;
+
+updatePendingSave:
+UPDATE project SET pending_save_json = ? WHERE id = ?;
+
+updateSyncedState:
+UPDATE project SET base_set_id = ?, draft_edit_log_json = ?, pending_save_json = ? WHERE id = ?;
 
 updateLastOpened:
 UPDATE project SET last_opened_ms = ? WHERE id = ?;

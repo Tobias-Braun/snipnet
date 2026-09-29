@@ -1,6 +1,9 @@
 package app.snipnet.shared.store
 
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.snipnet.shared.model.Court
+import app.snipnet.shared.model.EditOp
+import app.snipnet.shared.model.EditOpKind
 import app.snipnet.shared.model.Point
 import app.snipnet.shared.model.Roi
 import app.snipnet.shared.model.Segment
@@ -46,6 +49,79 @@ class ProjectStoreTest {
         assertEquals(court, project.court)
         assertEquals(draft, project.draftSegments)
         assertEquals(id, store.findByRemoteVideoId("remote-1")?.id)
+    }
+
+    private val splitOp =
+        EditOp(EditOpKind.SPLIT, 1L, listOf(Segment(0, 10)), listOf(Segment(0, 5), Segment(5, 10)))
+    private val deleteOp = EditOp(EditOpKind.DELETE, 2L, listOf(Segment(0, 5)), emptyList())
+
+    @Test
+    fun draftKeepsItsEditLogAndBaseSet() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        store.saveDraft(id, listOf(Segment(0, 5)), listOf(splitOp, deleteOp))
+        store.setBaseSetId(id, "set-1")
+
+        val project = assertNotNull(store.get(id))
+        assertEquals(listOf(splitOp, deleteOp), project.draftEditLog)
+        assertEquals("set-1", project.baseSetId)
+    }
+
+    @Test
+    fun markSavedContinuesFromTheCreatedSetAndKeepsOnlyLaterOperations() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        val save = PendingSave("set-1", listOf(Segment(0, 5)), listOf(splitOp), isFinal = false)
+        store.saveDraft(id, listOf(Segment(0, 5)), listOf(splitOp, deleteOp))
+        store.setPendingSave(id, save)
+        assertEquals(listOf(id), store.withPendingSave().map { it.id })
+
+        val remaining = store.markSaved(id, "set-2", save)
+
+        val project = assertNotNull(store.get(id))
+        assertEquals(listOf(deleteOp), remaining)
+        assertEquals(listOf(deleteOp), project.draftEditLog)
+        assertEquals("set-2", project.baseSetId)
+        assertNull(project.pendingSave)
+        assertEquals(emptyList(), store.withPendingSave())
+    }
+
+    @Test
+    fun markSavedKeepsANewerQueuedSaveAndDropsAnUnrelatedLog() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        val old = PendingSave("set-1", listOf(Segment(0, 5)), listOf(splitOp), isFinal = false)
+        val newer = old.copy(isFinal = true)
+        store.saveDraft(id, listOf(Segment(0, 5)), listOf(deleteOp))
+        store.setPendingSave(id, newer)
+
+        val remaining = store.markSaved(id, "set-2", old)
+
+        assertEquals(emptyList(), remaining)
+        assertEquals(newer, store.get(id)?.pendingSave)
+    }
+
+    @Test
+    fun aDatabaseFromTheFirstSchemaVersionIsMigrated() {
+        val file = Files.createTempDirectory("snipnet-db").resolve("snipnet.db")
+        val old = JdbcSqliteDriver("jdbc:sqlite:$file")
+        old.execute(
+            null,
+            "CREATE TABLE project (id TEXT NOT NULL PRIMARY KEY, original_path TEXT NOT NULL, proxy_path TEXT, " +
+                "remote_video_id TEXT, court_json TEXT, draft_segments_json TEXT, created_at_ms INTEGER NOT NULL, " +
+                "last_opened_ms INTEGER NOT NULL)",
+            0,
+        )
+        old.execute(null, "INSERT INTO project VALUES ('old', '/a.mp4', NULL, 'remote-1', NULL, NULL, 1, 1)", 0)
+        old.execute(null, "PRAGMA user_version = 1", 0)
+        old.close()
+
+        val project = assertNotNull(store(openDatabase(file)).get("old"))
+
+        assertEquals("remote-1", project.remoteVideoId)
+        assertNull(project.baseSetId)
+        assertNull(project.pendingSave)
+        assertEquals(emptyList(), project.draftEditLog)
     }
 
     @Test

@@ -28,6 +28,8 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 | `video` (transcode) | `ProxyTranscoder` runs the bundled ffmpeg with the proxy format of `docs/api.md`, parses `-progress` output and is cancellable. |
 | `upload` | `ProxyUploader` streams the proxy to the presigned URL with progress and retry with backoff. |
 | `projects` | `ImportPipeline` (app-wide: import, transcode, upload, analysis polling, retry/cancel), `ProjectRow` (badge derivation) and `ProjectsStateHolder`. The court screen calls `pipeline.startAnalysis(projectId)` after the court is saved and returns to the list, which shows the progress and opens the editor when the analysis succeeds. |
+| `editor` (sync) | `EditorStateHolder` loads the newest prediction and user set, keeps the draft, edit log and parent set id in the local store after every edit, and saves through `SaveQueue`: a save is queued in the store first and removed only once `POST /v1/videos/:id/segment-sets` accepted it, so offline saves are retried (by the open editor, else by the app-wide loop). Save is ctrl/cmd+S, "Mark as final" sets `isFinal`. |
+| `settings` | Settings dialog with the training-consent toggle (`PATCH /v1/me`). |
 | `ui` | Composables. The editor screen is a placeholder until its feature lands. |
 
 The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set. Local projects live in `snipnet.db` there.

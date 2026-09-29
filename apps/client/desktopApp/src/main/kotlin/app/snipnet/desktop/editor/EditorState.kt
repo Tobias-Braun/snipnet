@@ -8,7 +8,9 @@ import app.snipnet.shared.editing.EditHistory
 import app.snipnet.shared.editing.EditSegment
 import app.snipnet.shared.editing.Timeline
 import app.snipnet.shared.editing.Viewport
+import app.snipnet.shared.model.EditOp
 import app.snipnet.shared.model.ScoreCurve
+import app.snipnet.shared.model.Segment
 
 /** Which side of a segment a trim drag moves. */
 enum class SegmentEdge { Start, End }
@@ -30,6 +32,13 @@ enum class SegmentEdge { Start, End }
  * @property snapGuideMs the time a trim drag is currently snapped to, drawn as a guide line.
  * @property saveError why the draft could not be stored locally; editing continues in memory.
  * @property export the export dialog and the export in progress.
+ * @property baseSetId the segment set the edits started from; the `parentSetId` of the next save.
+ * @property priorEditLog operations of earlier sessions that are not part of [history] (restored from the draft).
+ * @property savedSegments the segments of the newest set known to the server, null while unknown (offline).
+ * @property saving a save is being uploaded right now.
+ * @property queued a save is waiting for the server; it is retried until it is accepted.
+ * @property syncError why the server refused the queued save for good; null when it is merely waiting.
+ * @property savedFinal the newest saved set was marked as final.
  */
 data class EditorState(
     val loading: Boolean = true,
@@ -51,7 +60,24 @@ data class EditorState(
     val snapGuideMs: Long? = null,
     val saveError: String? = null,
     val export: ExportUiState = ExportUiState(),
+    val baseSetId: String? = null,
+    val priorEditLog: List<EditOp> = emptyList(),
+    val savedSegments: List<Segment>? = null,
+    val saving: Boolean = false,
+    val queued: Boolean = false,
+    val syncError: String? = null,
+    val savedFinal: Boolean = false,
 ) {
+    /** Everything done since [baseSetId], the log a save uploads. */
+    val editLog: List<EditOp> get() = priorEditLog + (history?.editLog ?: emptyList())
+
+    /** Whether the server lacks some of the current work: edits not yet saved, or a save still waiting to go out. */
+    val hasUnsavedChanges: Boolean
+        get() {
+            val current = timeline?.toApiSegments() ?: return false
+            return queued || editLog.isNotEmpty() || (savedSegments != null && current != savedSegments)
+        }
+
     val timeline: Timeline? get() = history?.timeline
 
     val segments: List<EditSegment> get() = history?.timeline?.segments ?: emptyList()

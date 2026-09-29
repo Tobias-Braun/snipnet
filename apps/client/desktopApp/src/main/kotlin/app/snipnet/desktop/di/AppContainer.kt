@@ -5,21 +5,25 @@ import app.snipnet.desktop.auth.Session
 import app.snipnet.desktop.auth.TokenStore
 import app.snipnet.desktop.court.CourtSelectionStateHolder
 import app.snipnet.desktop.editor.EditorStateHolder
+import app.snipnet.desktop.editor.SaveQueue
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
 import app.snipnet.desktop.projects.ImportPipeline
 import app.snipnet.desktop.projects.ProjectsStateHolder
+import app.snipnet.desktop.settings.SettingsStateHolder
 import app.snipnet.desktop.upload.HttpProxyUploader
 import app.snipnet.desktop.video.FfmpegProxyTranscoder
 import app.snipnet.desktop.video.JavaCvVideoEngine
 import app.snipnet.desktop.video.VideoEngine
 import app.snipnet.desktop.window.WindowSettingsStore
 import app.snipnet.shared.api.SnipnetApi
-import app.snipnet.shared.model.SegmentSetKind
 import app.snipnet.shared.store.ProjectStore
 import app.snipnet.shared.store.openDatabase
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import java.nio.file.Path
 import java.util.UUID
 
@@ -70,6 +74,21 @@ class AppContainer(
         )
     }
 
+    /**
+     * Uploads saved corrections. [startBackgroundWork] runs its loop, which retries the saves of projects without an
+     * open editor, so a save queued while offline still goes out after the editor was closed.
+     */
+    val saveQueue: SaveQueue by lazy {
+        SaveQueue(projectStore) { remoteVideoId, save ->
+            api.createSegmentSet(remoteVideoId, save.parentSetId, save.segments, save.editLog, save.isFinal)
+        }
+    }
+
+    /** Starts the background work that must run for the whole app lifetime, called once from the root composable. */
+    fun startBackgroundWork() {
+        saveQueue.start(CoroutineScope(SupervisorJob() + Dispatchers.Main))
+    }
+
     val session =
         Session(api, TokenStore(dataDir.resolve("token")), onLoggedOut = {
             pipeline.reset()
@@ -104,10 +123,12 @@ class AppContainer(
             projectId,
             projectStore,
             videoEngine,
-            loadPrediction = { remoteVideoId ->
-                api.listSegmentSets(remoteVideoId).lastOrNull { it.kind == SegmentSetKind.PREDICTION }
-            },
+            saveQueue,
+            loadSets = { remoteVideoId -> api.listSegmentSets(remoteVideoId) },
         )
+
+    /** Backs the settings dialog; the dialog closes it when it leaves the composition. */
+    fun settingsStateHolder() = SettingsStateHolder(session)
 
     /** Ends the session and returns to the login screen with an empty back stack. */
     fun logout() {

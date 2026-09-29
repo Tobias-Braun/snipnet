@@ -40,7 +40,8 @@ class EditorExportTest {
             "p1",
             store,
             FakeEngine(),
-            loadPrediction = { prediction(threeRallies) },
+            newQueue(store),
+            loadSets = { listOf(prediction(threeRallies)) },
             dispatcher = UnconfinedTestDispatcher(),
             exporter = exporter,
         )

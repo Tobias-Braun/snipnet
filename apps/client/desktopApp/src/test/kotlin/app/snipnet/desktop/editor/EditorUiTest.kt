@@ -45,7 +45,8 @@ class EditorUiTest {
                 "p1",
                 store,
                 engine,
-                loadPrediction = { prediction(threeRallies) },
+                newQueue(store),
+                loadSets = { listOf(prediction(threeRallies)) },
                 now = { 1L },
                 dispatcher = UnconfinedTestDispatcher(),
             )

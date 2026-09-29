@@ -35,6 +35,7 @@ import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.awtTransferable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import app.snipnet.desktop.di.AppContainer
 import app.snipnet.desktop.nav.Screen
@@ -42,6 +43,7 @@ import app.snipnet.desktop.projects.ProjectRow
 import app.snipnet.desktop.projects.ProjectStatus
 import app.snipnet.desktop.projects.ProjectsStateHolder
 import app.snipnet.desktop.projects.SupportedVideo
+import app.snipnet.desktop.settings.SettingsDialog
 import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.datatransfer.DataFlavor
@@ -59,6 +61,11 @@ fun ProjectsScreen(container: AppContainer) {
     val state by holder.state.collectAsState()
     val user by container.session.user.collectAsState()
     var dragging by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        SettingsDialog(remember { container.settingsStateHolder() }, onDismiss = { showSettings = false })
+    }
 
     val dropTarget =
         remember(holder) {
@@ -105,6 +112,9 @@ fun ProjectsScreen(container: AppContainer) {
                 )
             }
             TextButton(onClick = holder::refresh, enabled = !state.refreshing) { Text("Refresh") }
+            TextButton(onClick = { showSettings = true }, modifier = Modifier.testTag("open-settings")) {
+                Text("Settings")
+            }
             OutlinedButton(onClick = container::logout) { Text("Sign out") }
             Button(onClick = { holder.import(pickVideoFiles()) }) { Text("Import video") }
         }

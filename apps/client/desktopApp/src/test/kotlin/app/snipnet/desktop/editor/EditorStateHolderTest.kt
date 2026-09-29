@@ -40,13 +40,17 @@ class EditorStateHolderTest {
             ),
         )
 
-    private fun holder(): EditorStateHolder {
-        store.create("/videos/match.mp4", remoteVideoId = "remote-1")
+    private val server = FakeSegmentSetServer()
+    private val queue = newQueue(store, server)
+
+    private fun holder(createProject: Boolean = true): EditorStateHolder {
+        if (createProject) store.create("/videos/match.mp4", remoteVideoId = "remote-1")
         return EditorStateHolder(
             "p1",
             store,
             engine,
-            loadPrediction = { loadedPrediction },
+            queue,
+            loadSets = { listOfNotNull(loadedPrediction) },
             now = { clock++ },
             dispatcher = UnconfinedTestDispatcher(),
         )
@@ -66,13 +70,13 @@ class EditorStateHolderTest {
     fun aSavedDraftWinsOverThePrediction() {
         store.create("/videos/match.mp4", remoteVideoId = "remote-1")
         store.saveDraft("p1", listOf(Segment(1_000, 2_000)))
-        val holder = EditorStateHolder("p1", store, engine, { loadedPrediction }, { 1L }, UnconfinedTestDispatcher())
+        val holder = holder(createProject = false)
         assertEquals(listOf(1_000L), holder.starts())
     }
 
     @Test
     fun anUnknownProjectReportsALoadError() {
-        val holder = EditorStateHolder("missing", store, engine, dispatcher = UnconfinedTestDispatcher())
+        val holder = EditorStateHolder("missing", store, engine, queue, dispatcher = UnconfinedTestDispatcher())
         assertNotNull(holder.state.value.loadError)
     }
 

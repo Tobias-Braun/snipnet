@@ -31,6 +31,7 @@ enum class EditorCommand {
     Undo,
     Redo,
     ToggleRalliesOnly,
+    Save,
 }
 
 /** Plain (unmodified) key bindings. The shift variants of the arrow keys are listed in [LONG_STEP_KEYS]. */
@@ -66,7 +67,7 @@ private val LONG_STEP_KEYS: Map<Key, EditorCommand> =
 /**
  * Maps a key press to its editor command, or null when the key is not bound. Only key-down events count, and
  * letter shortcuts are ignored while ctrl or cmd is held so that platform shortcuts never trigger an edit
- * (ctrl/cmd+S must not split). Undo is ctrl/cmd+Z and redo adds shift.
+ * (ctrl/cmd+S saves instead of splitting). Undo is ctrl/cmd+Z and redo adds shift.
  */
 fun editorCommandFor(event: KeyEvent): EditorCommand? {
     if (event.type != KeyEventType.KeyDown) return null
@@ -79,7 +80,7 @@ fun editorCommandFor(
     shortcut: Boolean,
     shift: Boolean,
 ): EditorCommand? {
-    if (shortcut) return undoRedoFor(key, shift)
+    if (shortcut) return if (key == Key.S && !shift) EditorCommand.Save else undoRedoFor(key, shift)
     return (if (shift) LONG_STEP_KEYS[key] else null) ?: KEY_BINDINGS[key]
 }
 

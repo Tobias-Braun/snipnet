@@ -93,6 +93,10 @@ class EditHistoryTest {
         assertEquals(listOf(Segment(10_000, 21_000)), history.editLog[0].after)
         assertEquals(listOf(Segment(30_000, 40_000)), history.editLog[1].before)
         assertEquals(listOf(Segment(30_000, 41_000)), history.editLog[1].after)
+
+        val undone = history.undo()
+        assertEquals(40_000L, undone.timeline.find(2)!!.endMs)
+        assertEquals(21_000L, undone.timeline.find(1)!!.endMs)
     }
 
     @Test

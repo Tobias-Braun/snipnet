@@ -36,7 +36,7 @@ import pandas as pd
 from snipnet_ml.labels import Roi
 
 # Bump whenever the meaning of any feature column changes so cached results are not reused.
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2
 
 _AUDIO_HOP = 128
 
@@ -150,13 +150,42 @@ def probe_duration(path: str | Path) -> float:
         return float(container.duration / av.time_base) if container.duration else 0.0
 
 
+def bounded_duration(path: str | Path, content_end_s: float) -> float:
+    """Video length in seconds, given where the decoded content (relative to the timeline origin) ends.
+
+    Some containers (Matroska written with a timestamp offset) declare the absolute end time as their duration, which
+    over-counts by the stream start time. The decoded content can never be longer than the real video, so the smaller
+    of the two is used; a container without a declared duration falls back to the content end.
+    """
+    declared = probe_duration(path)
+    return min(declared, content_end_s) if declared else content_end_s
+
+
+def stream_origin(container: av.container.InputContainer) -> float:
+    """Timeline origin in seconds: the start time of the first video stream, else of the container, else 0.
+
+    Proxies not produced by our own ffmpeg command (edit lists, `-output_ts_offset`, MPEG-TS) may start at a non-zero
+    timestamp. All decoded timestamps are expressed relative to this origin so that video frames, audio samples and the
+    0.5 s window grid share one zero.
+    """
+    stream = container.streams.video[0] if container.streams.video else None
+    if stream is not None and stream.start_time is not None and stream.time_base is not None:
+        return float(stream.start_time * stream.time_base)
+    if container.start_time is not None:
+        return float(container.start_time / av.time_base)
+    return 0.0
+
+
 def decode_gray_frames(path: str | Path, fps: float) -> Iterator[tuple[float, np.ndarray]]:
-    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`."""
+    """Yield `(timestamp_s, gray_frame)` pairs resampled to `fps`, timed like `decode_frames`."""
     return decode_frames(path, fps, "gray")
 
 
 def decode_frames(path: str | Path, fps: float, pixel_format: str) -> Iterator[tuple[float, np.ndarray]]:
     """Yield `(timestamp_s, frame)` pairs resampled to `fps`, converted to the PyAV `pixel_format` (e.g. "gray").
+
+    Timestamps are relative to the timeline origin (see `stream_origin`), so the first frame of a proxy with a
+    non-zero start time is at 0 s; frames before the origin are skipped.
 
     This is a generator on purpose: an hour of 480p proxy at 5 fps is several GB of pixels, so frames are consumed one
     at a time instead of being stacked into a single array. It is the single home of the resampling logic.
@@ -164,29 +193,48 @@ def decode_frames(path: str | Path, fps: float, pixel_format: str) -> Iterator[t
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
+        origin = stream_origin(container)
         next_time = 0.0
         step = 1.0 / fps
         for frame in container.decode(stream):
-            if frame.time is None or frame.time + 1e-6 < next_time:
+            if frame.time is None:
                 continue
-            yield frame.time, frame.to_ndarray(format=pixel_format)
+            time_s = frame.time - origin
+            if time_s + 1e-6 < next_time:
+                continue
+            yield time_s, frame.to_ndarray(format=pixel_format)
             # Advance past the timestamp actually taken so a slow source does not cause a burst of catch-up frames.
-            next_time = max(next_time + step, frame.time + step / 2)
+            next_time = max(next_time + step, time_s + step / 2)
 
 
 def decode_audio(path: str | Path, sample_rate: int) -> np.ndarray:
-    """Decode the first audio stream to mono float32 at `sample_rate`; silent videos yield an empty array."""
+    """Decode the first audio stream to mono float32 at `sample_rate`; silent videos yield an empty array.
+
+    Sample 0 of the result lies at the same timeline origin as the video frames (see `stream_origin`): when the audio
+    starts later than the video the gap is padded with silence, when it starts earlier (e.g. AAC priming) the leading
+    samples are dropped.
+    """
     chunks: list[np.ndarray] = []
+    lead_samples: int | None = None
     with av.open(str(path)) as container:
         if not container.streams.audio:
             return np.zeros(0, dtype=np.float32)
+        origin = stream_origin(container)
         resampler = av.AudioResampler(format="fltp", layout="mono", rate=sample_rate)
         for frame in container.decode(container.streams.audio[0]):
+            if lead_samples is None:
+                lead_samples = round((frame.time - origin) * sample_rate) if frame.time is not None else 0
             for out in resampler.resample(frame):
                 chunks.append(out.to_ndarray().reshape(-1))
         for out in resampler.resample(None):
             chunks.append(out.to_ndarray().reshape(-1))
-    return np.concatenate(chunks).astype(np.float32) if chunks else np.zeros(0, dtype=np.float32)
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    samples = np.concatenate(chunks).astype(np.float32)
+    lead = lead_samples or 0
+    if lead > 0:
+        return np.concatenate([np.zeros(lead, dtype=np.float32), samples])
+    return samples[-lead:]
 
 
 def _window_mean(values: np.ndarray, times: np.ndarray, window_s: float, n_windows: int) -> np.ndarray:
@@ -279,12 +327,14 @@ def compute_features(path: str | Path, roi: Roi, config: FeatureConfig | None = 
         motion = motion_series(decode_gray_frames(path, config.fps), roi, config.roi_expand)
     except ValueError as error:
         raise ValueError(f"{error} from {path}") from error
-    duration = probe_duration(path) or motion.last_frame_time + 1.0 / config.fps
+    samples = decode_audio(path, config.sample_rate)
+    # Only the video bounds the duration: the audio track may run a little past the last frame (encoder padding).
+    duration = bounded_duration(path, motion.last_frame_time + 1.0 / config.fps)
     n_windows = max(1, math.ceil(duration / config.window_s - 1e-9))
 
     roi_motion = _window_mean(motion.roi, motion.times, config.window_s, n_windows)
     outside_motion = _window_mean(motion.outside, motion.times, config.window_s, n_windows)
-    onset_mean, onset_max, transients = audio_features(decode_audio(path, config.sample_rate), config, n_windows)
+    onset_mean, onset_max, transients = audio_features(samples, config, n_windows)
     starts = np.arange(n_windows) * config.window_s
     return FeatureFrame.from_arrays(
         t_start=starts,

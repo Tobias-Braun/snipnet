@@ -54,17 +54,6 @@ fun ProjectsScreen(container: AppContainer) {
 }
 
 @Composable
-fun CourtSelectionScreen(
-    navigator: Navigator,
-    videoId: String,
-) {
-    PlaceholderScreen("Court selection", "Mark the net and court area for video $videoId.") {
-        OutlinedButton(onClick = { navigator.back() }) { Text("Back") }
-        Button(onClick = { navigator.push(Screen.Editor(videoId)) }) { Text("Continue to editor") }
-    }
-}
-
-@Composable
 fun EditorScreen(
     navigator: Navigator,
     videoId: String,

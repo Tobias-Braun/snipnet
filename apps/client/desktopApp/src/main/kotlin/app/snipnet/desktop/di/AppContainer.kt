@@ -3,6 +3,7 @@ package app.snipnet.desktop.di
 import app.snipnet.desktop.auth.AuthStateHolder
 import app.snipnet.desktop.auth.Session
 import app.snipnet.desktop.auth.TokenStore
+import app.snipnet.desktop.court.CourtSelectionStateHolder
 import app.snipnet.desktop.nav.Navigator
 import app.snipnet.desktop.nav.Screen
 import app.snipnet.desktop.video.JavaCvVideoEngine
@@ -49,6 +50,18 @@ class AppContainer(
 
     /** Backs the login/register screen; the caller closes it when the screen leaves the composition. */
     fun authStateHolder() = AuthStateHolder(session, onAuthenticated = { navigator.resetTo(Screen.Projects) })
+
+    /** Backs the court selection of the local project [projectId]; the caller closes it when the screen is left. */
+    fun courtSelectionStateHolder(
+        projectId: String,
+        onSaved: () -> Unit,
+    ) = CourtSelectionStateHolder(
+        projectId,
+        projectStore,
+        videoEngine,
+        uploadCourt = { remoteVideoId, court -> api.putCourt(remoteVideoId, court) },
+        onSaved = onSaved,
+    )
 
     /** Ends the session and returns to the login screen with an empty back stack. */
     fun logout() {

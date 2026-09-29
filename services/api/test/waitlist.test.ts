@@ -1,9 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema } from './helpers/seed.js';
 
 const WEB_ORIGIN = 'https://snipnet.example';
 
@@ -14,13 +13,7 @@ describe('POST /v1/waitlist', () => {
   let appOpen = false;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
   });
 
   afterEach(async () => {

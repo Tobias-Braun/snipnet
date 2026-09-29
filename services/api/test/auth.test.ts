@@ -1,10 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
 import { LOGIN_RATE_LIMIT } from '../src/routes/auth.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema } from './helpers/seed.js';
 
 interface AuthBody {
   token: string;
@@ -17,13 +16,7 @@ describe('auth routes', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
   });
 
   afterEach(async () => {

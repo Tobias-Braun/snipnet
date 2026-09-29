@@ -3,22 +3,15 @@ import Type from 'typebox';
 
 import { buildApp } from '../src/app.js';
 import { AppError } from '../src/errors.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
+import { createMigratedTestSchema } from './helpers/seed.js';
 
 describe('API application', () => {
   let schema: TestSchema;
   let app: Awaited<ReturnType<typeof buildApp>> | undefined;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
+    schema = await createMigratedTestSchema();
   });
 
   afterEach(async () => {

@@ -2,10 +2,9 @@ import { HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
-import { createDb } from '../src/db/client.js';
-import { runMigrations } from '../src/db/migrate.js';
-import { createTestSchema, type TestSchema } from './helpers/db.js';
+import type { TestSchema } from './helpers/db.js';
 import { createTestBucket, type TestBucket } from './helpers/s3.js';
+import { createMigratedTestSchema } from './helpers/seed.js';
 
 interface UploadInfo {
   url: string;
@@ -39,14 +38,8 @@ describe('video routes', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    schema = await createTestSchema();
+    schema = await createMigratedTestSchema();
     bucket = await createTestBucket(schema.config.s3);
-    const db = createDb(schema.config.database);
-    try {
-      await runMigrations(db);
-    } finally {
-      await db.destroy();
-    }
     app = await buildApp({ config: { ...schema.config, s3: bucket.config } });
   });
 

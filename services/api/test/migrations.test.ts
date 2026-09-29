@@ -5,6 +5,7 @@ import { createDb } from '../src/db/client.js';
 import { runMigrations } from '../src/db/migrate.js';
 import type { Database } from '../src/db/types.js';
 import { createTestSchema, type TestSchema } from './helpers/db.js';
+import { insertVideo } from './helpers/seed.js';
 
 describe('migrations', () => {
   let schema: TestSchema;
@@ -69,30 +70,22 @@ describe('migrations', () => {
   });
 
   /** Inserts a user owning one minimal video; `name` keeps email and object key unique across tests. */
-  async function insertVideo(name: string): Promise<{ id: string }> {
+  async function insertUserVideo(name: string): Promise<{ id: string }> {
     const user = await db
       .insertInto('users')
       .values({ email: `${name}@example.com`, password_hash: 'x' })
       .returning('id')
       .executeTakeFirstOrThrow();
-    return db
-      .insertInto('videos')
-      .values({
-        user_id: user.id,
-        filename: 'v.mp4',
-        duration_ms: 1000,
-        width: 10,
-        height: 10,
-        fps: 15,
-        proxy_size_bytes: 1,
-        object_key: `proxies/${name}.mp4`,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
+    const id = await insertVideo(db, {
+      user_id: user.id,
+      object_key: `proxies/${name}.mp4`,
+      status: 'created',
+    });
+    return { id };
   }
 
   it('allows only one queued or running job per video', async () => {
-    const video = await insertVideo('jobs');
+    const video = await insertUserVideo('jobs');
 
     const first = await db
       .insertInto('jobs')
@@ -108,7 +101,7 @@ describe('migrations', () => {
   });
 
   it('deletes dependent rows together with a video', async () => {
-    const video = await insertVideo('cascade');
+    const video = await insertUserVideo('cascade');
     await db
       .insertInto('segment_sets')
       .values({ video_id: video.id, kind: 'user', segments: JSON.stringify([{ startMs: 0, endMs: 10 }]) })

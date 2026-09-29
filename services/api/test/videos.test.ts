@@ -98,6 +98,7 @@ describe('video routes', () => {
         proxySizeBytes: 4096,
         status: 'created',
         court: null,
+        courtSuggestion: null,
         createdAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT.*Z$/) as string,
         updatedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT.*Z$/) as string,
         latestJob: null,

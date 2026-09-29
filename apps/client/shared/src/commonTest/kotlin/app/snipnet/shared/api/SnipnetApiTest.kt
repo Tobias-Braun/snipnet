@@ -469,6 +469,23 @@ class SnipnetApiTest {
         }
 
     @Test
+    fun lateUnauthorizedForAnAlreadyReplacedTokenDoesNotNotifyTheHook() =
+        runTest {
+            var notified = 0
+            lateinit var api: SnipnetApi
+            // The token changes while the request is in flight, as after a logout followed by a new login.
+            api =
+                api(token = "old") {
+                    api.token = "new"
+                    respond(unauthorizedBody, HttpStatusCode.Unauthorized, jsonHeaders)
+                }
+            api.onUnauthorized = { notified++ }
+            assertFailsWith<ApiError.Unauthorized> { api.listVideos() }
+            assertEquals(0, notified)
+            assertEquals("new", api.token)
+        }
+
+    @Test
     fun otherErrorStatusesDoNotNotifyTheHook() =
         runTest {
             var notified = 0

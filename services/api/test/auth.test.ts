@@ -239,16 +239,24 @@ describe('auth routes', () => {
       const trusted = await exhaust((i) => `198.51.100.${String(i)}`);
       expect(trusted).toEqual(Array<number>(LOGIN_RATE_LIMIT.max + 1).fill(401));
     });
+  });
 
-    it('does not rate limit registration', async () => {
-      await newApp();
-      const responses = await Promise.all(
-        Array.from({ length: LOGIN_RATE_LIMIT.max + 2 }, () =>
-          app.inject({ method: 'POST', url: '/v1/auth/register', payload: { email: 'bad', password: 'x' } }),
-        ),
-      );
+  describe('POST /v1/auth/register rate limit', () => {
+    it('is rate limited per client address with the rate_limited error code', async () => {
+      const max = 5;
+      app = await buildApp({
+        config: { ...schema.config, registerRateLimit: { max, windowMs: 60_000 } },
+      });
+      const attempt = () =>
+        app.inject({ method: 'POST', url: '/v1/auth/register', payload: { email: 'bad', password: 'x' } });
 
-      expect(responses.every((response) => response.statusCode === 400)).toBe(true);
+      for (let i = 0; i < max; i += 1) {
+        expect((await attempt()).statusCode).toBe(400);
+      }
+      const limited = await attempt();
+
+      expect(limited.statusCode).toBe(429);
+      expect(limited.json()).toMatchObject({ error: { code: 'rate_limited' } });
     });
   });
 

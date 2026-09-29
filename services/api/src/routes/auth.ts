@@ -10,6 +10,14 @@ const UNIQUE_VIOLATION = '23505';
 /** Login attempts allowed per client address and minute before the endpoint answers `rate_limited`. */
 export const LOGIN_RATE_LIMIT = { max: 10, timeWindow: '1 minute' } as const;
 
+export interface AuthRouteOptions {
+  /**
+   * Per-IP registration limit. Every well-formed registration costs an argon2id hash (CPU and a libuv threadpool
+   * slot) and a users row, so it is bounded much tighter than login.
+   */
+  registerRateLimit: { max: number; windowMs: number };
+}
+
 const User = Type.Object(
   {
     id: Type.String({ format: 'uuid' }),
@@ -67,7 +75,7 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /** Registration, login and the signed-in user's own profile (`/v1/auth/*` and `/v1/me`). */
-export const authRoutes: FastifyPluginCallbackTypebox = (app, _options, done) => {
+export const authRoutes: FastifyPluginCallbackTypebox<AuthRouteOptions> = (app, options, done) => {
   app.addSchema(User);
 
   const issueToken = (userId: string) => app.jwt.sign({ sub: userId });
@@ -75,6 +83,9 @@ export const authRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =>
   app.post(
     '/auth/register',
     {
+      config: {
+        rateLimit: { max: options.registerRateLimit.max, timeWindow: options.registerRateLimit.windowMs },
+      },
       schema: {
         tags: ['auth'],
         body: Credentials,
@@ -82,6 +93,7 @@ export const authRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =>
           201: AuthResponse,
           400: Type.Ref('ErrorResponse'),
           409: Type.Ref('ErrorResponse'),
+          429: Type.Ref('ErrorResponse'),
         },
       },
     },

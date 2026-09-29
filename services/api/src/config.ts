@@ -41,6 +41,8 @@ export interface AppConfig {
   trustProxy: false | string;
   /** Per-IP limit of the unauthenticated waitlist endpoint. */
   waitlistRateLimit: { max: number; windowMs: number };
+  /** Per-IP limit of registration, which costs an argon2id hash and a users row per request. */
+  registerRateLimit: { max: number; windowMs: number };
 }
 
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -96,6 +98,8 @@ const envSchema = z.object({
     .default('false'),
   WAITLIST_RATE_LIMIT_MAX: positiveInt.default(10),
   WAITLIST_RATE_LIMIT_WINDOW_SECONDS: positiveInt.default(60),
+  REGISTER_RATE_LIMIT_MAX: positiveInt.default(5),
+  REGISTER_RATE_LIMIT_WINDOW_SECONDS: positiveInt.default(60),
 });
 
 /**
@@ -146,6 +150,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     waitlistRateLimit: {
       max: values.WAITLIST_RATE_LIMIT_MAX,
       windowMs: values.WAITLIST_RATE_LIMIT_WINDOW_SECONDS * 1000,
+    },
+    registerRateLimit: {
+      max: values.REGISTER_RATE_LIMIT_MAX,
+      windowMs: values.REGISTER_RATE_LIMIT_WINDOW_SECONDS * 1000,
     },
   };
 }

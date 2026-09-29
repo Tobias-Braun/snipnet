@@ -104,6 +104,7 @@ describe('loadConfig', () => {
       webOrigins: [],
       trustProxy: false,
       waitlistRateLimit: { max: 10, windowMs: 60_000 },
+      registerRateLimit: { max: 5, windowMs: 60_000 },
     });
   });
 

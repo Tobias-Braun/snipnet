@@ -1,7 +1,7 @@
 import type { FastifyPluginCallback } from 'fastify';
 
 import { adminRoutes } from './admin.js';
-import { authRoutes } from './auth.js';
+import { authRoutes, type AuthRouteOptions } from './auth.js';
 import { healthRoutes } from './health.js';
 import { jobRoutes } from './jobs.js';
 import { segmentSetRoutes } from './segment-sets.js';
@@ -13,10 +13,10 @@ import { waitlistRoutes, type WaitlistRouteOptions } from './waitlist.js';
  * touching the shared application setup.
  */
 export const v1Routes: FastifyPluginCallback<
-  { version: string; adminToken: string } & WaitlistRouteOptions
+  { version: string; adminToken: string } & WaitlistRouteOptions & AuthRouteOptions
 > = (app, options, done) => {
   void app.register(healthRoutes, { version: options.version });
-  void app.register(authRoutes);
+  void app.register(authRoutes, { registerRateLimit: options.registerRateLimit });
   void app.register(videoRoutes);
   void app.register(jobRoutes);
   void app.register(segmentSetRoutes);

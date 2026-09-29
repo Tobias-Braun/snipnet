@@ -27,7 +27,7 @@ import av
 import numpy as np
 import pandas as pd
 
-from snipnet_ml.features import decode_frames, expanded_pixel_box, probe_duration
+from snipnet_ml.features import bounded_duration, decode_frames, expanded_pixel_box
 from snipnet_ml.labels import Court, Roi
 
 # Bump whenever the meaning of a person feature column changes.
@@ -395,7 +395,7 @@ def extract_person_features(
     frames = track_persons(decode_rgb_frames(path, config.fps), court.roi, detector, config)
     if not frames:
         raise ValueError(f"no video frames decoded from {path}")
-    duration = probe_duration(path) or frames[-1].time_s + 1.0 / config.fps
+    duration = bounded_duration(path, frames[-1].time_s + 1.0 / config.fps)
     return person_features(frames, court, aspect, duration, config)
 
 

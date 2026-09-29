@@ -1,4 +1,5 @@
 import shutil
+import subprocess
 import time
 
 import numpy as np
@@ -163,3 +164,47 @@ def test_wrappers_share_the_resampling_of_decode_frames(tmp_path) -> None:
     direct = list(features.decode_frames(video, 5.0, "gray"))
     assert [t for t, _ in direct] == [t for t, _ in gray]
     assert all(np.array_equal(a[1], b[1]) for a, b in zip(direct, gray, strict=True))
+
+
+def _ffmpeg(*args: str) -> None:
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *args], check=True)
+
+
+@needs_ffmpeg
+def test_offset_stream_start_keeps_rally_windows_aligned(synthetic, tmp_path) -> None:
+    video, labels = synthetic
+    shifted = tmp_path / "shifted.mkv"
+    _ffmpeg("-i", str(video), "-c", "copy", "-output_ts_offset", "3.7", str(shifted))
+    with features.av.open(str(shifted)) as container:
+        assert features.stream_origin(container) == pytest.approx(3.7, abs=0.05)
+
+    baseline = extract_features(video, labels.court.roi)
+    table = extract_features(shifted, labels.court.roi)
+    assert len(table) == len(baseline)
+    assert table.t_start[0] == 0
+    inside, dead = rally_mask(labels, table)
+    assert table.roi_motion[inside].mean() > 4 * table.roi_motion[dead].mean()
+    assert table.onset_mean[inside].mean() > 3 * table.onset_mean[dead].mean()
+    # The shifted proxy carries the same content, so its windows must match the unshifted ones closely.
+    assert np.corrcoef(table.roi_motion, baseline.roi_motion)[0, 1] > 0.98
+    assert np.corrcoef(table.onset_mean, baseline.onset_mean)[0, 1] > 0.9
+
+
+@needs_ffmpeg
+def test_audio_starting_after_video_is_padded_to_the_video_origin(synthetic, tmp_path) -> None:
+    video, _ = synthetic
+    delayed = tmp_path / "delayed.mkv"
+    _ffmpeg(
+        *("-i", str(video), "-itsoffset", "1.0", "-i", str(video)),
+        *("-map", "0:v", "-map", "1:a", "-c", "copy", str(delayed)),
+    )
+    rate = 16000
+    plain = features.decode_audio(video, rate)
+    padded = features.decode_audio(delayed, rate)
+    lead = rate
+    assert len(padded) >= len(plain) + lead - rate // 10
+    assert np.abs(padded[: lead - 800]).max() < 1e-3
+    # Hits in the padded track sit one second later than in the plain one.
+    plain_peak = int(np.argmax(np.abs(plain[: 5 * rate])))
+    padded_peak = int(np.argmax(np.abs(padded[: 6 * rate])))
+    assert padded_peak - plain_peak == pytest.approx(lead, abs=rate // 50)

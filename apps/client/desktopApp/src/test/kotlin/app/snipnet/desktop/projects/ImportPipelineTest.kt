@@ -299,6 +299,32 @@ class ImportPipelineTest {
         }
 
     @Test
+    fun aCourtSavedBeforeTheUploadIsSentAfterUploadCompleteAndBeforeAnalyze() =
+        runBlocking<Unit> {
+            transcoder.behavior = { output ->
+                store.setCourt("p1", court())
+                Files.write(output, ByteArray(100))
+            }
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+
+            jobs += listOf("succeeded")
+            pipeline.startAnalysis("p1")
+            awaitRow { it.status == ProjectStatus.ANALYZED }
+
+            val order = requests.filter { it.startsWith("POST") || it.startsWith("PUT") }
+            assertEquals(
+                listOf(
+                    "POST /v1/videos",
+                    "POST /v1/videos/v1/upload-complete",
+                    "PUT /v1/videos/v1/court",
+                    "POST /v1/videos/v1/analyze",
+                ),
+                order,
+            )
+        }
+
+    @Test
     fun analysisWithoutACourtFailsWithAClearMessage() =
         runBlocking<Unit> {
             pipeline.import(listOf(original))

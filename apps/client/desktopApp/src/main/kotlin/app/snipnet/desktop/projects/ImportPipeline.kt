@@ -358,8 +358,24 @@ class ImportPipeline(
             target = created.upload
         }
         uploader.upload(target, proxy) { setProgress(project.id, Stage.UPLOADING, it) }
-        remember(api.uploadComplete(videoId))
+        val completed = api.uploadComplete(videoId)
+        remember(completed)
         synchronized(lock) { targets.remove(project.id) }
+        sendLocalCourt(project.id, completed)
+    }
+
+    /**
+     * Sends a court that was marked before the video was registered. The court screen only calls the server when the
+     * project already has a remote video id, so a court saved while the proxy was still transcoding or uploading
+     * exists only locally; the project is re-read because the court may have been saved during the upload.
+     */
+    private suspend fun sendLocalCourt(
+        projectId: String,
+        video: Video,
+    ) {
+        if (video.court != null) return
+        val court = store.get(projectId)?.court ?: return
+        remember(api.putCourt(video.id, court))
     }
 
     private fun stillValid(target: UploadTarget): Boolean =

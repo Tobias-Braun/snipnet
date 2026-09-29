@@ -3,6 +3,8 @@ package app.snipnet.desktop.upload
 import app.snipnet.shared.model.UploadTarget
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.request.request
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -52,7 +54,19 @@ class HttpProxyUploader(
     engine: HttpClientEngine,
     private val backoffMs: List<Long> = listOf(1_000, 3_000, 8_000),
 ) : ProxyUploader {
-    private val client = HttpClient(engine) { expectSuccess = false }
+    /**
+     * The engine is shared with the API client, and its engine-wide request timeout (15 s for CIO) would abort the
+     * upload of any realistic proxy. The whole request is therefore unbounded here; a stalled connection is still
+     * detected by the socket timeout, which surfaces as a retryable failure.
+     */
+    private val client =
+        HttpClient(engine) {
+            expectSuccess = false
+            install(HttpTimeout) {
+                requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+                socketTimeoutMillis = SOCKET_TIMEOUT_MS
+            }
+        }
 
     override suspend fun upload(
         target: UploadTarget,
@@ -145,5 +159,8 @@ class HttpProxyUploader(
     private companion object {
         /** The upload only counts as done once the storage has answered, so the body alone never reaches 1.0. */
         const val MAX_RUNNING_PROGRESS = 0.99
+
+        /** No byte sent or received for this long means the connection is stuck. */
+        const val SOCKET_TIMEOUT_MS = 60_000L
     }
 }

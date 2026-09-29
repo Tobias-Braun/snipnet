@@ -106,6 +106,24 @@ class ProxyUploaderTest {
         assertEquals(1, received.size)
     }
 
+    /**
+     * The shared CIO engine caps every request at its `requestTimeout` (15 s by default), which a proxy of a few
+     * hundred megabytes easily exceeds. The upload must lift that cap, so a slow storage here outlasts a tiny one.
+     */
+    @Test
+    fun anUploadMayTakeLongerThanTheEngineRequestTimeout() =
+        runBlocking {
+            server.createContext("/slow") { exchange ->
+                exchange.requestBody.readAllBytes()
+                Thread.sleep(1_500)
+                exchange.sendResponseHeaders(200, -1)
+                exchange.close()
+            }
+            val shortTimeoutEngine = CIO.create { requestTimeout = 500 }
+            val slowUploader = HttpProxyUploader(shortTimeoutEngine, backoffMs = emptyList())
+            slowUploader.upload(target.copy(url = target.url.replace("/proxy", "/slow")), file) {}
+        }
+
     @Test
     fun anUnreachableStorageIsARetryableFailure() {
         server.stop(0)

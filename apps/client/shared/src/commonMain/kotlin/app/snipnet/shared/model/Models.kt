@@ -95,11 +95,11 @@ data class Video(
     val proxySizeBytes: Long,
     val status: VideoStatus,
     val court: Court?,
-    /** The detector's proposal for [court]; absent until the server has analyzed the proxy or found no net. */
-    val courtSuggestion: CourtSuggestion? = null,
     val createdAt: String,
     val updatedAt: String,
     val latestJob: Job?,
+    /** The detector's proposal for [court]; absent until the server has analyzed the proxy or found no net. */
+    val courtSuggestion: CourtSuggestion? = null,
 )
 
 /** A court found by automatic net detection together with how sure the detector is, `0..1`. */

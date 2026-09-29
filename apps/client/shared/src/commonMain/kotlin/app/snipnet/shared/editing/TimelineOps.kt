@@ -7,7 +7,9 @@ import app.snipnet.shared.model.EditOpKind
  * The outcome of one applied operation: the new [timeline] and the [op] to append to the edit log.
  *
  * `EditOp.before` and `EditOp.after` hold the API view (accepted segments only) of the segments the operation
- * touched, so a toggle shows up as the segment being present on one side and absent on the other.
+ * touched, so a toggle shows up as the segment being present on one side and absent on the other. An operation
+ * that only touched rejected segments therefore has both sides empty; [EditHistory] keeps it undoable but leaves it
+ * out of [EditHistory.editLog].
  */
 data class Edit(
     val timeline: Timeline,

@@ -39,6 +39,29 @@ class EditHistoryTest {
     }
 
     @Test
+    fun editsOfRejectedSegmentsAreUndoableButNotLogged() {
+        val rejected = start.apply(start.timeline.toggleAccept(setOf(1), 1))
+        val moved = rejected.apply(rejected.timeline.move(1, 2_000, 2))
+        val split = moved.apply(moved.timeline.split(13_000, 3))
+
+        assertEquals(3, split.timeline.segments.size)
+        assertEquals(listOf(EditOpKind.TOGGLE), split.editLog.map { it.op })
+
+        val undone = split.undo().undo()
+        assertEquals(rejected.timeline.segments, undone.timeline.segments)
+        assertEquals(listOf(EditOpKind.TOGGLE), undone.editLog.map { it.op })
+    }
+
+    @Test
+    fun editsOfAcceptedSegmentsStayLoggedNextToRejectedOnes() {
+        val rejected = start.apply(start.timeline.toggleAccept(setOf(1), 1))
+        val movedRejected = rejected.apply(rejected.timeline.move(1, 2_000, 2))
+        val both = movedRejected.apply(movedRejected.timeline.move(2, 1_000, 3))
+
+        assertEquals(listOf(EditOpKind.TOGGLE, EditOpKind.MOVE), both.editLog.map { it.op })
+    }
+
+    @Test
     fun newEditClearsRedoStack() {
         val edited = start.apply(start.timeline.delete(setOf(1), 1)).undo()
         val other = edited.apply(edited.timeline.toggleAccept(setOf(2), 2))

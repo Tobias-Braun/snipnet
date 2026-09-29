@@ -510,11 +510,14 @@ describe('job routes', () => {
           segments,
           scores: null,
         });
+        // Without MinIO the real objectInfo would throw as well, so make sure the 500 comes from the stubbed check.
+        expect(objectInfo).toHaveBeenCalledTimes(2);
       } finally {
         objectInfo.mockRestore();
       }
 
       expect(response.statusCode).toBe(500);
+      expect(response.json()).toMatchObject({ error: { code: 'internal' } });
       const job = await app.db
         .selectFrom('jobs')
         .select(['status', 'attempts'])

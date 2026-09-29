@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
@@ -447,6 +447,47 @@ describe('job routes', () => {
         .where('id', '=', jobId)
         .executeTakeFirstOrThrow();
       expect(job.status).toBe('running');
+    });
+
+    it('fails job and video instead of storing a prediction for a proxy replaced during analysis', async () => {
+      await clearJobs();
+      const { jobId, videoId, auth } = await queuedJob();
+      await app.db
+        .updateTable('videos')
+        .set({ proxy_etag: '"recorded"' })
+        .where('id', '=', videoId)
+        .execute();
+      const objectInfo = vi.spyOn(app.storage, 'objectInfo');
+      objectInfo.mockResolvedValueOnce({ sizeBytes: 2048, etag: '"recorded"' });
+      expect((await claim()).statusCode).toBe(200);
+
+      // The owner overwrites the proxy through the still-valid upload URL while the worker analyses it.
+      objectInfo.mockResolvedValueOnce({ sizeBytes: 2048, etag: '"replaced"' });
+      let response;
+      try {
+        response = await post(`/internal/jobs/${jobId}/result`, {
+          modelVersion: 'm-1',
+          segments,
+          scores: null,
+        });
+      } finally {
+        objectInfo.mockRestore();
+      }
+
+      expect(response.statusCode).toBe(409);
+      const job = await app.inject({ method: 'GET', url: `/v1/jobs/${jobId}`, headers: auth });
+      expect(job.json<JobBody>()).toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining('changed') as string,
+      });
+      const video = await app.inject({ method: 'GET', url: `/v1/videos/${videoId}`, headers: auth });
+      expect(video.json<{ status: string }>().status).toBe('failed');
+      const sets = await app.db
+        .selectFrom('segment_sets')
+        .select('id')
+        .where('video_id', '=', videoId)
+        .execute();
+      expect(sets).toHaveLength(0);
     });
 
     it('accepts an empty segment list and rejects a second result', async () => {

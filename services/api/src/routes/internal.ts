@@ -305,7 +305,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
     async (request, reply) => {
       const { modelVersion, segments, scores } = request.body;
-      await app.db.transaction().execute(async (trx) => {
+      const proxyChanged = await app.db.transaction().execute(async (trx) => {
         const job = await lockRunningJob(trx, request.params.id, request.body.workerId, request.body.attempt);
         const video = await trx
           .selectFrom('videos')
@@ -314,6 +314,14 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           .forUpdate()
           .executeTakeFirstOrThrow();
         assertValidSegments(segments, video.duration_ms);
+
+        // The presigned upload URL outlives the claim, so the proxy may have been replaced while the worker
+        // analysed it. The prediction then describes a file that no longer exists and must not be stored. The
+        // failure is committed, so the outcome is returned instead of thrown, which would roll it back.
+        if (!(await proxyIsUnchanged(video))) {
+          await failPermanently(trx, job, PROXY_CHANGED_MESSAGE);
+          return true;
+        }
 
         await trx
           .insertInto('segment_sets')
@@ -343,7 +351,9 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           .set({ status: 'analyzed', updated_at: sql<Date>`now()` })
           .where('id', '=', video.id)
           .execute();
+        return false;
       });
+      if (proxyChanged) throw new AppError('conflict', PROXY_CHANGED_MESSAGE);
       return reply.code(204).send(null);
     },
   );

@@ -12,6 +12,8 @@ import java.nio.file.Path
  * @property progress fraction of the running export in 0..1.
  * @property result the files written by the last successful export.
  * @property error why the last export failed.
+ * @property edlUnsupportedFps nominal frame rate of the original when it is too high for EDL (see
+ *   [ProjectFiles.edlUnsupportedFps]), null while unknown or when EDL works; the dialog disables EDL for it.
  */
 data class ExportUiState(
     val open: Boolean = false,
@@ -20,4 +22,5 @@ data class ExportUiState(
     val progress: Double = 0.0,
     val result: List<Path>? = null,
     val error: String? = null,
+    val edlUnsupportedFps: Int? = null,
 )

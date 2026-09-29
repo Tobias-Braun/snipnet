@@ -64,10 +64,22 @@ fun ExportDialog(
                     ) { Text("Choose folder") }
                 }
                 Text("Format", style = MaterialTheme.typography.titleSmall)
+                val edlBlocked = state.edlUnsupportedFps
                 ExportMode.entries.forEach { mode ->
-                    ChoiceRow(mode.label, options.mode == mode, !state.running, "export-mode-${mode.name}") {
+                    val available = mode != ExportMode.Edl || edlBlocked == null
+                    val enabled = !state.running && available
+                    ChoiceRow(mode.label, options.mode == mode, enabled, "export-mode-${mode.name}") {
                         holder.setExportOptions { it.copy(mode = mode) }
                     }
+                }
+                if (edlBlocked != null) {
+                    Text(
+                        "EDL is unavailable for $edlBlocked fps footage (frame numbers are limited to two digits). " +
+                            "Use FCPXML or a video export.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("export-edl-unavailable"),
+                    )
                 }
                 if (videoMode) {
                     Text("Quality", style = MaterialTheme.typography.titleSmall)

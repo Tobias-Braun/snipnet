@@ -24,9 +24,9 @@ import java.nio.file.Path
 const val TEST_DURATION_MS = 60_000L
 
 /** A player that records what the editor asks of it and lets tests push positions like the real clock would. */
-class FakePlayer : VideoPlayer {
-    override val info =
-        VideoInfo(TEST_DURATION_MS, 1920, 1080, 25.0, "h264", "aac", 44100, 2)
+class FakePlayer(
+    override val info: VideoInfo = VideoInfo(TEST_DURATION_MS, 1920, 1080, 25.0, "h264", "aac", 44100, 2),
+) : VideoPlayer {
     override val frames: SharedFlow<ImageBitmap> = MutableSharedFlow(replay = 1)
     override val position = MutableStateFlow(0L)
     override val isPlaying = MutableStateFlow(false)

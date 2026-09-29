@@ -1,9 +1,11 @@
 package app.snipnet.desktop.editor
 
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import app.snipnet.desktop.export.ExportMode
 import app.snipnet.desktop.export.ExportOptions
 import app.snipnet.desktop.export.ExportRequest
 import app.snipnet.desktop.export.FfmpegRallyExporter
+import app.snipnet.desktop.export.ProjectFiles
 import app.snipnet.desktop.export.RallyExporter
 import app.snipnet.desktop.export.exportRanges
 import app.snipnet.desktop.state.StateHolder
@@ -568,7 +570,30 @@ class EditorStateHolder(
                         progress = 0.0,
                     ),
             )
+        }.also { checkEdlSupport() }
+
+    /**
+     * Probes the original in the background to learn whether EDL can represent its frame rate. Until the probe
+     * answers EDL stays selectable; when it turns out unsupported the option is disabled and a selected EDL falls
+     * back to FCPXML, so the failure never has to be discovered by starting an export.
+     */
+    private fun checkEdlSupport() {
+        val original = originalPath ?: return
+        scope.launch {
+            val fps = runCatching { ProjectFiles.edlUnsupportedFps(engine.probe(original)) }.getOrNull()
+            update { s ->
+                val options = s.export.options
+                val fallback = fps != null && options.mode == ExportMode.Edl && !s.export.running
+                s.copy(
+                    export =
+                        s.export.copy(
+                            edlUnsupportedFps = fps,
+                            options = if (fallback) options.copy(mode = ExportMode.Fcpxml) else options,
+                        ),
+                )
+            }
         }
+    }
 
     /** Changes the dialog choices; ignored while an export runs. */
     fun setExportOptions(transform: (ExportOptions) -> ExportOptions) =

@@ -177,6 +177,10 @@ def test_params_yaml_rejects_unknown_and_invalid_values(tmp_path: Path) -> None:
     path.write_text("- 1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="mapping"):
         HeuristicParams.from_yaml(path)
+    for bad_value in ("fast", "true", ".nan", ".inf"):
+        path.write_text(f"min_gap_s: {bad_value}\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="min_gap_s must be a finite number"):
+            HeuristicParams.from_yaml(path)
 
 
 def test_load_model_selects_heuristic_and_dummy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

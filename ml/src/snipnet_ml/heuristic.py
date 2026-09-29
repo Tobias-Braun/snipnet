@@ -88,6 +88,7 @@ class HeuristicParams:
     pad_after_s: float = 1.5
 
     def __post_init__(self) -> None:
+        self._check_numbers()
         if min(self.motion_weight, self.onset_weight, self.transient_weight) < 0:
             raise ValueError("signal weights must not be negative")
         if self.motion_weight + self.onset_weight + self.transient_weight <= 0:
@@ -101,6 +102,17 @@ class HeuristicParams:
         for name in ("min_rally_s", "min_gap_s", "pad_before_s", "pad_after_s", "motion_smooth_s", "audio_smooth_s"):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must not be negative")
+
+    def _check_numbers(self) -> None:
+        """Reject non-numeric and non-finite values.
+
+        YAML happily yields strings, booleans or `.nan` for a mistyped value; without this check they surface as a
+        TypeError deep in the range checks or, for NaN, pass them silently and break the model.
+        """
+        for field in fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+                raise ValueError(f"{field.name} must be a finite number, got {value!r}")
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> HeuristicParams:

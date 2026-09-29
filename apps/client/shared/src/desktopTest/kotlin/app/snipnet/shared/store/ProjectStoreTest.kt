@@ -11,8 +11,10 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ProjectStoreTest {
     private var clock = 1_000L
@@ -50,6 +52,20 @@ class ProjectStoreTest {
         assertEquals(emptyList(), store.withPendingSave())
         signedIn = null
         assertEquals(emptyList(), store.withPendingSave())
+    }
+
+    @Test
+    fun ownershipIsCheckedAgainstTheCurrentUser() {
+        val store = store()
+        val id = store.create("/a.mp4").id
+        assertTrue(store.isOwnedByCurrentUser(id))
+
+        signedIn = "u2"
+        assertFalse(store.isOwnedByCurrentUser(id))
+        signedIn = null
+        assertFalse(store.isOwnedByCurrentUser(id))
+        signedIn = "u1"
+        assertFalse(store.isOwnedByCurrentUser("unknown"))
     }
 
     @Test

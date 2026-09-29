@@ -79,6 +79,15 @@ class ProjectStore(
 
     fun get(id: String): Project? = queries.selectById(id).executeAsOneOrNull()?.toProject()
 
+    /**
+     * Whether project [id] belongs to the user who is signed in right now. Anything that sends a project's data with
+     * the current session's token must check this immediately before, because the account can change at any moment.
+     */
+    fun isOwnedByCurrentUser(id: String): Boolean {
+        val userId = currentUserId() ?: return false
+        return queries.selectById(id).executeAsOneOrNull()?.user_id == userId
+    }
+
     fun findByRemoteVideoId(remoteVideoId: String): Project? {
         val userId = currentUserId() ?: return null
         val rows = queries.selectByRemoteVideoId(remoteVideoId, userId).executeAsList()

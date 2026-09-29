@@ -19,6 +19,12 @@ log = logging.getLogger(__name__)
 PROGRESS_INTERVAL_S = 1.0
 # Downloads may take minutes, but a stalled connection should not hang the worker forever.
 HTTP_TIMEOUT = httpx.Timeout(30.0, read=120.0)
+# The error text is stored on the job and shown to the user, while model exception messages can be arbitrarily long.
+MAX_ERROR_LENGTH = 1000
+
+
+class ProxyDownloadError(Exception):
+    """Downloading the proxy failed. The message deliberately omits the presigned URL and its signature."""
 
 
 def parse_court(raw: dict[str, Any] | None) -> Court | None:
@@ -66,6 +72,10 @@ class Worker:
                 # The API being down or restarting is routine; back off like on an empty queue.
                 log.warning("API request failed: %s", exc)
                 worked = False
+            except Exception:
+                # A malformed claim response must not kill the worker; the claimed job's lease simply expires.
+                log.exception("unexpected error while claiming a job")
+                worked = False
             if not worked:
                 self._stop.wait(self._settings.poll_interval_s)
 
@@ -107,11 +117,17 @@ class Worker:
 
     def _download(self, url: str, dest: Path) -> None:
         # The proxy URL is presigned, so it must not receive the internal token.
-        with self._client.stream("GET", url) as response:
-            response.raise_for_status()
-            with dest.open("wb") as out:
-                for chunk in response.iter_bytes(1024 * 1024):
-                    out.write(chunk)
+        try:
+            with self._client.stream("GET", url) as response:
+                if response.is_error:
+                    raise ProxyDownloadError(f"proxy download failed with HTTP {response.status_code}")
+                with dest.open("wb") as out:
+                    for chunk in response.iter_bytes(1024 * 1024):
+                        out.write(chunk)
+        except httpx.HTTPError as exc:
+            # httpx messages can embed the request URL including its signature, so the original exception is
+            # not chained into the logs or into the error reported to the API.
+            raise ProxyDownloadError(f"proxy download failed: {type(exc).__name__}") from None
 
     def _progress_reporter(self, job_id: str) -> Callable[[float], None]:
         last_sent: float | None = None
@@ -133,7 +149,8 @@ class Worker:
     def _report_failure(self, job_id: str, exc: Exception) -> None:
         retryable = not isinstance(exc, InvalidInputError)
         try:
-            self._post(job_id, "fail", {"error": str(exc) or type(exc).__name__, "retryable": retryable})
+            error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
+            self._post(job_id, "fail", {"error": error, "retryable": retryable})
         except httpx.HTTPError as post_exc:
             # If even the failure report is lost, the lease expires and the job is claimed again.
             log.warning("could not report failure of job %s: %s", job_id, post_exc)

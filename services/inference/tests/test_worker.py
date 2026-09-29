@@ -111,14 +111,28 @@ def test_model_failure_posts_fail_and_cleans_up(api: respx.MockRouter, error: Ex
     assert not model.video_path.parent.exists()
 
 
-def test_download_failure_is_reported_as_retryable(api: respx.MockRouter) -> None:
-    api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
-    api.get(PROXY_URL).respond(403)
+def test_download_failure_is_reported_as_retryable_without_the_presigned_url(api: respx.MockRouter) -> None:
+    signed_url = f"{PROXY_URL}?X-Amz-Signature=deadbeef"
+    api.post(f"{API}/internal/jobs/claim").respond(200, json={**CLAIM, "proxyUrl": signed_url})
+    api.get(signed_url).respond(403)
     fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(204)
 
     make_worker(RecordingModel(), httpx.Client()).run_once()
 
-    assert json.loads(fail.calls[0].request.content)["retryable"] is True
+    assert json.loads(fail.calls[0].request.content) == {
+        "error": "proxy download failed with HTTP 403",
+        "retryable": True,
+    }
+
+
+def test_long_error_messages_are_truncated(api: respx.MockRouter) -> None:
+    api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"x")
+    fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(204)
+
+    make_worker(RecordingModel(error=RuntimeError("x" * 5000)), httpx.Client()).run_once()
+
+    assert json.loads(fail.calls[0].request.content)["error"] == "x" * 1000
 
 
 def test_empty_queue_claims_nothing(api: respx.MockRouter) -> None:
@@ -142,6 +156,8 @@ def test_run_survives_api_errors_and_stops_on_request(api: respx.MockRouter) -> 
             worker.stop()
         if calls == 1:
             raise httpx.ConnectError("api down")
+        if calls == 2:
+            return httpx.Response(200, json={"unexpected": True})
         return httpx.Response(204)
 
     api.post(f"{API}/internal/jobs/claim").mock(side_effect=claim)

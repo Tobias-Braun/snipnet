@@ -18,4 +18,10 @@ COPY services/inference ./services/inference
 
 RUN uv sync --locked --no-dev --package snipnet-inference
 
-CMD ["uv", "run", "--no-sync", "python", "-m", "snipnet_inference"]
+# The worker only needs to read the installed code and write to /tmp, so it does not run as root.
+RUN useradd --system --no-create-home worker
+USER worker
+
+# Python runs as PID 1 directly (no `uv run` wrapper) so that `docker stop` delivers SIGTERM to the worker's
+# own handler, which finishes the current job before exiting.
+CMD ["/app/.venv/bin/python", "-m", "snipnet_inference"]

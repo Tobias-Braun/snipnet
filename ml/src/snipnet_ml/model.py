@@ -80,7 +80,13 @@ def probe_duration_ms(video_path: Path) -> int:
             check=True,
         )
         duration_s = float(json.loads(result.stdout)["format"]["duration"])
-    except (subprocess.CalledProcessError, KeyError, ValueError) as exc:
+    except subprocess.CalledProcessError as exc:
+        # A negative return code means ffprobe was killed by a signal (e.g. Ctrl-C reaching the whole process
+        # group), which says nothing about the file, so the job must stay retryable.
+        if exc.returncode < 0:
+            raise
+        raise InvalidInputError(f"cannot read video duration from {video_path.name}") from exc
+    except (KeyError, TypeError, ValueError) as exc:
         raise InvalidInputError(f"cannot read video duration from {video_path.name}") from exc
     duration_ms = int(duration_s * 1000)
     if duration_ms <= 0:
@@ -98,6 +104,9 @@ class DummyModel:
         duration_ms = probe_duration_ms(video_path)
         start_ms = duration_ms // 3
         end_ms = duration_ms * 2 // 3
+        # For a video of a few milliseconds the middle third is empty, and docs/api.md requires startMs < endMs.
+        if end_ms <= start_ms:
+            raise InvalidInputError("video is too short to contain a rally")
         samples = max(1, round(duration_ms / 1000))
         values = [1.0 if start_ms <= (i + 0.5) * 1000 < end_ms else 0.0 for i in range(samples)]
         progress(1.0)

@@ -90,6 +90,9 @@ services:
     environment:
       API_URL: http://api:3000
     restart: unless-stopped
+    # On SIGTERM the worker finishes its current job first; Compose's default of 10 s would SIGKILL it mid-job
+    # and leave the job to the 10 minute lease timeout.
+    stop_grace_period: 10m
 
 volumes:
   postgres-data:

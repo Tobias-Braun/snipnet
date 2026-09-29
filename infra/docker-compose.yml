@@ -94,6 +94,14 @@ services:
     # and leave the job to the 10 minute lease timeout.
     stop_grace_period: 10m
 
+  # Static landing page served by non-root nginx. The container listens on 8080 and is published on localhost only.
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - '127.0.0.1:${WEB_PORT:-8080}:8080'
+
 volumes:
   postgres-data:
   minio-data:

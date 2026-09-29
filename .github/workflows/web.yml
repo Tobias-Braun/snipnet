@@ -44,3 +44,6 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
+      - name: Build the nginx image
+        working-directory: .
+        run: docker build -f apps/web/Dockerfile .

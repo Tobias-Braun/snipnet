@@ -22,12 +22,15 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
@@ -60,6 +63,10 @@ class ImportPipelineTest {
 
     /** Number of upcoming `PUT /v1/videos/v1/court` calls that answer 503 before the court is accepted. */
     private val courtFailures = AtomicInteger()
+
+    /** When set, `POST /v1/videos` suspends until it is completed, so a test can act while the POST is in flight. */
+    @Volatile private var createGate: CompletableDeferred<Unit>? = null
+    private val createStarted = CompletableDeferred<Unit>()
 
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
@@ -137,12 +144,18 @@ class ImportPipelineTest {
     private val engine =
         MockEngine { request -> route(request) }
 
-    private fun io.ktor.client.engine.mock.MockRequestHandleScope.route(request: HttpRequestData) =
+    private suspend fun io.ktor.client.engine.mock.MockRequestHandleScope.route(request: HttpRequestData) =
         request.url.encodedPath.let { path ->
             requests += "${request.method.value} $path"
             when {
                 path == "/v1/videos" && request.method == HttpMethod.Post -> {
                     createCount.incrementAndGet()
+                    createGate?.let { gate ->
+                        createStarted.complete(Unit)
+                        // Uncancellable on purpose: it models a POST the server already accepted, which the
+                        // client's cooperative cancellation cannot take back.
+                        withContext(NonCancellable) { gate.await() }
+                    }
                     respond(
                         """{"video":${videoJson("created")},"upload":{"url":"http://storage/x","method":"PUT",
                         "headers":{"Content-Type":"video/mp4"},"expiresAt":"2099-01-01T00:00:00Z"}}""",
@@ -289,6 +302,26 @@ class ImportPipelineTest {
             transcoder.behavior = { output -> Files.write(output, ByteArray(100)) }
             pipeline.retry(failed.project.id)
             awaitRow { it.status == ProjectStatus.READY }
+        }
+
+    @Test
+    fun removingAProjectWhileTheVideoIsBeingCreatedDeletesTheNewServerVideo() =
+        runBlocking<Unit> {
+            val gate = CompletableDeferred<Unit>()
+            createGate = gate
+            pipeline.import(listOf(original))
+            withTimeout(10_000) { createStarted.await() }
+
+            pipeline.remove("p1")
+            gate.complete(Unit)
+
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            assertTrue(store.list().isEmpty())
+            assertTrue(pipeline.rows.value.isEmpty())
+            assertEquals(0, uploader.uploaded.get())
+            assertTrue("POST /v1/videos/v1/upload-complete" !in requests)
         }
 
     @Test

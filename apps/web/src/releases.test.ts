@@ -136,6 +136,24 @@ describe('fetchLatestRelease', () => {
     });
   });
 
+  it('applies the visitor arch to their own OS only and platform defaults to the others', async () => {
+    const release = {
+      tag_name: 'v2.0.0',
+      assets: [
+        { name: 'snipnet-2.0.0-x64.dmg', browser_download_url: 'mac-x64' },
+        { name: 'snipnet-2.0.0-arm64.dmg', browser_download_url: 'mac-arm' },
+        { name: 'snipnet-2.0.0-arm64.msi', browser_download_url: 'win-arm' },
+        { name: 'snipnet-2.0.0-x64.msi', browser_download_url: 'win-x64' },
+        { name: 'snipnet-2.0.0-arm64.deb', browser_download_url: 'linux-arm' },
+        { name: 'snipnet-2.0.0-amd64.deb', browser_download_url: 'linux-x64' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(release))));
+
+    const latest = await fetchLatestRelease(undefined, { os: 'linux', arch: 'arm64' });
+    expect(latest?.options.map((option) => option.url)).toEqual(['mac-arm', 'win-x64', 'linux-arm']);
+  });
+
   // The component keeps the releases page link whenever this resolves to null, so each failure mode is pinned here.
   it.each([
     ['a rate limited response', () => Promise.resolve(new Response('{}', { status: 403 }))],

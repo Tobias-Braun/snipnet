@@ -54,6 +54,16 @@ const ARCH_MARKERS: Record<Arch, RegExp> = {
   x64: /(^|[^a-z0-9])(x64|x86[_-]64|amd64)([^a-z0-9]|$)/i,
 };
 
+/**
+ * The architecture assumed for a platform when nothing better is known: nearly all current Macs are Apple
+ * Silicon, while Windows and Linux desktops are still overwhelmingly x64.
+ */
+const DEFAULT_ARCH: Record<DesktopOs, Arch> = {
+  mac: 'arm64',
+  windows: 'x64',
+  linux: 'x64',
+};
+
 interface ArchNavigator {
   userAgent: string;
   platform: string;
@@ -76,7 +86,7 @@ export async function detectArch(nav: ArchNavigator = navigator, os: Os = detect
     // The hint request can be rejected by permissions policy; fall through to the heuristics.
   }
   if (/arm64|aarch64|armv8/i.test(`${nav.platform} ${nav.userAgent}`)) return 'arm64';
-  return os === 'mac' ? 'arm64' : 'x64';
+  return os === 'unknown' ? 'x64' : DEFAULT_ARCH[os];
 }
 
 /**
@@ -103,8 +113,20 @@ export interface LatestRelease {
   options: DownloadOption[];
 }
 
-/** Resolves to `null` for any failure so callers can fall back to the releases page. */
-export async function fetchLatestRelease(signal?: AbortSignal, arch?: Arch): Promise<LatestRelease | null> {
+export interface Visitor {
+  os: Os;
+  arch: Arch;
+}
+
+/**
+ * Resolves to `null` for any failure so callers can fall back to the releases page. The visitor's detected
+ * architecture only applies to their own OS; the links for the other platforms are meant for other machines,
+ * so they use that platform's default architecture instead.
+ */
+export async function fetchLatestRelease(
+  signal?: AbortSignal,
+  visitor?: Visitor,
+): Promise<LatestRelease | null> {
   try {
     const response = await fetch(LATEST_RELEASE_API, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -118,6 +140,7 @@ export async function fetchLatestRelease(signal?: AbortSignal, arch?: Arch): Pro
     );
     const options: DownloadOption[] = [];
     for (const os of Object.keys(OS_LABELS) as DesktopOs[]) {
+      const arch = os === visitor?.os ? visitor.arch : DEFAULT_ARCH[os];
       const asset = pickAsset(assets, os, arch);
       if (asset) options.push({ os, label: OS_LABELS[os], url: asset.browser_download_url });
     }

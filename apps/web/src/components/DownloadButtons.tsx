@@ -20,7 +20,7 @@ export function DownloadButtons() {
   useEffect(() => {
     const controller = new AbortController();
     void detectArch()
-      .then((arch) => fetchLatestRelease(controller.signal, arch))
+      .then((arch) => fetchLatestRelease(controller.signal, { os: detectOs(), arch }))
       .then((latest) => {
         if (!controller.signal.aborted) setRelease(latest);
       });

@@ -11,6 +11,15 @@ object ProjectFiles {
     /** First frame of the record side; editing systems conventionally start sequences at one hour. */
     private const val RECORD_START_HOURS = 1
 
+    /** CMX3600 has a two-digit frame field, so timecodes cannot express nominal rates above this. */
+    private const val EDL_MAX_NOMINAL_FPS = 99
+
+    /** CMX3600 readers accept at most 70 characters on the TITLE line. */
+    private const val EDL_MAX_TITLE_LENGTH = 70
+
+    /** Keeps the `* FROM CLIP NAME:` comment within the same width readers tolerate for the title. */
+    private const val EDL_MAX_CLIP_NAME_LENGTH = 70
+
     /**
      * FCPXML 1.8: one asset that points at [sourceUri] and a sequence whose spine holds one asset clip per
      * range, back to back. Times are exact fractions of the frame duration, as Final Cut Pro requires.
@@ -78,7 +87,11 @@ object ProjectFiles {
      * CMX3600 EDL with one cut event per range on the auxiliary reel `AX`, audio and video together. Source
      * timecodes continue from the timecode embedded in the file (00:00:00:00 when it has none), the record side
      * starts at 01:00:00:00 and runs without gaps.
-     * Timecodes count the nominal frame rate without drop frames.
+     * Timecodes count the nominal frame rate without drop frames. TITLE and clip name are cut to safe lengths.
+     *
+     * Throws [ExportException] for nominal rates above 99 fps (for example 120 fps slow motion): the frame field
+     * has two digits, and timecodes against a lower base rate would silently misplace every cut in the editor,
+     * so refusing with a clear message is safer. FCPXML supports such rates.
      */
     fun edl(
         name: String,
@@ -87,9 +100,15 @@ object ProjectFiles {
         ranges: List<TimeRange>,
     ): String {
         val rate = FrameRate.fromFps(info.frameRate)
+        if (rate.nominal > EDL_MAX_NOMINAL_FPS) {
+            throw ExportException(
+                "The EDL format cannot represent ${rate.nominal} fps footage (frame numbers are limited to two " +
+                    "digits). Export as FCPXML or as video instead.",
+            )
+        }
         val origin = sourceStartFrames(info, rate)
         val out = StringBuilder()
-        out.append("TITLE: ").appendLine(singleLine(name))
+        out.append("TITLE: ").appendLine(singleLine(name, EDL_MAX_TITLE_LENGTH))
         out.appendLine("FCM: NON-DROP FRAME")
         var record = RECORD_START_HOURS * 3600L * rate.nominal
         ranges.forEachIndexed { index, range ->
@@ -106,7 +125,7 @@ object ProjectFiles {
                     rate.timecode(recordEnd),
                 ),
             )
-            out.append("* FROM CLIP NAME: ").appendLine(singleLine(clipName))
+            out.append("* FROM CLIP NAME: ").appendLine(singleLine(clipName, EDL_MAX_CLIP_NAME_LENGTH))
             record = recordEnd
         }
         return out.toString()
@@ -118,7 +137,16 @@ object ProjectFiles {
         rate: FrameRate,
     ): Long = info.startTimecode?.let { rate.framesOf(it) } ?: 0L
 
-    private fun singleLine(text: String) = text.replace(Regex("[\\r\\n]+"), " ")
+    /** Joins line breaks into spaces and cuts to [maxLength] characters without splitting a surrogate pair. */
+    private fun singleLine(
+        text: String,
+        maxLength: Int = Int.MAX_VALUE,
+    ): String {
+        val flat = text.replace(Regex("[\\r\\n]+"), " ")
+        if (flat.length <= maxLength) return flat
+        val end = if (Character.isHighSurrogate(flat[maxLength - 1])) maxLength - 1 else maxLength
+        return flat.substring(0, end)
+    }
 
     private fun xml(text: String) =
         text

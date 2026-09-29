@@ -4,6 +4,7 @@ import app.snipnet.desktop.video.VideoInfo
 import app.snipnet.shared.editing.TimeRange
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class ProjectFilesTest {
@@ -97,5 +98,35 @@ class ProjectFilesTest {
         assertEquals(FrameRate(24000, 1001), FrameRate.fromFps(23.976))
         assertEquals(FrameRate(50, 1), FrameRate.fromFps(50.0))
         assertEquals(FrameRate(25, 1), FrameRate.fromFps(0.0))
+    }
+
+    @Test
+    fun edlRefusesFrameRatesWithThreeDigitFrameNumbers() {
+        val slowMotion = info.copy(frameRate = 120.0)
+        val error = assertFailsWith<ExportException> { ProjectFiles.edl("m", "m.mp4", slowMotion, ranges) }
+        assertTrue("120 fps" in error.message.orEmpty(), error.message)
+        val ntsc = info.copy(frameRate = 120000.0 / 1001)
+        assertFailsWith<ExportException> { ProjectFiles.edl("m", "m.mp4", ntsc, ranges) }
+    }
+
+    @Test
+    fun edlStillWritesTheHighestTwoDigitFrameRate() {
+        val edl = ProjectFiles.edl("m", "m.mp4", info.copy(frameRate = 99.0), listOf(TimeRange(0, 990)))
+        assertTrue("00:00:00:00 00:00:00:98 01:00:00:00 01:00:00:98" in edl, edl)
+    }
+
+    @Test
+    fun edlCutsLongTitlesAndClipNames() {
+        val long = "x".repeat(200)
+        val edl = ProjectFiles.edl(long, long, info, ranges)
+        assertTrue("TITLE: ${"x".repeat(70)}\n" in edl, edl)
+        assertTrue("* FROM CLIP NAME: ${"x".repeat(70)}\n" in edl, edl)
+    }
+
+    @Test
+    fun edlCutsNeverSplitASurrogatePair() {
+        val title = "x".repeat(69) + "🏐" + "tail"
+        val edl = ProjectFiles.edl(title, "m.mp4", info, ranges)
+        assertTrue("TITLE: ${"x".repeat(69)}\n" in edl, edl)
     }
 }

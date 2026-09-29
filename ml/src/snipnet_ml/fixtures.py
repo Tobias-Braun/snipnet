@@ -76,11 +76,13 @@ def _filter_graph(rallies: list[Rally], court: Court, rng: random.Random) -> str
     ]
     last = "bg1"
 
-    # Distractors keep moving for the whole video inside the left and right margins, outside the ROI.
+    # Distractors keep moving for the whole video inside the left and right margins, outside the ROI. Their colour
+    # is dark so that they differ from the background in luma too: motion features typically work on grayscale,
+    # and a mid-red of the same brightness as the green court would be invisible to them.
     for index, side_x in enumerate((0.03 * WIDTH, 0.9 * WIDTH)):
         speed = rng.uniform(1.5, 3.0)
         phase = rng.uniform(0, 6.28)
-        filters.append(f"color=c=0xc04040:s=20x20:r={FPS}[d{index}]")
+        filters.append(f"color=c=0x501818:s=20x20:r={FPS}[d{index}]")
         filters.append(
             f"[{last}][d{index}]overlay=x={side_x:.0f}:"
             f"y='{HEIGHT / 2 - 10:.0f}+{HEIGHT * 0.35:.0f}*sin({speed:.3f}*t+{phase:.3f})':eval=frame[dv{index}]"
@@ -113,6 +115,8 @@ def generate_video(
     court: Court = DEFAULT_COURT,
 ) -> Labels:
     """Render the synthetic proxy video to `output` and return the ground-truth labels."""
+    if duration_s <= 0:
+        raise ValueError("duration_s must be positive")
     if not ffmpeg_available():
         raise RuntimeError("ffmpeg is required to generate fixtures but was not found on PATH")
     output = Path(output)

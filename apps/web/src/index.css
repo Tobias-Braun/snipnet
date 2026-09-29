@@ -378,6 +378,11 @@ ol {
   text-align: center;
 }
 
+/* The default yellow focus ring would vanish against the yellow section background. */
+.download a:focus-visible {
+  outline-color: var(--net);
+}
+
 .download h2 {
   margin-bottom: 16px;
 }

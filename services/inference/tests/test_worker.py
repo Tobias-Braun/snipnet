@@ -184,3 +184,44 @@ def test_run_survives_api_errors_and_stops_on_request(api: respx.MockRouter) -> 
     worker.run()
 
     assert calls == 3
+
+
+def test_result_rejected_with_409_does_not_post_fail(api: respx.MockRouter) -> None:
+    api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    result = api.post(f"{API}/internal/jobs/{JOB_ID}/result").respond(409)
+    fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(204)
+
+    assert make_worker(RecordingModel(), httpx.Client()).run_once() is True
+
+    assert result.call_count == 1
+    assert fail.call_count == 0
+
+
+def test_progress_rejected_with_409_aborts_the_model_run_without_fail(api: respx.MockRouter) -> None:
+    api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    progress = api.post(f"{API}/internal/jobs/{JOB_ID}/progress").respond(409)
+    result = api.post(f"{API}/internal/jobs/{JOB_ID}/result").respond(204)
+    fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(204)
+    model = RecordingModel(progress_calls=10)
+
+    assert make_worker(model, httpx.Client()).run_once() is True
+
+    assert progress.call_count == 1
+    assert result.call_count == 0
+    assert fail.call_count == 0
+
+
+def test_fail_rejected_with_409_is_dropped(api: respx.MockRouter, caplog: pytest.LogCaptureFixture) -> None:
+    api.post(f"{API}/internal/jobs/claim").respond(200, json=CLAIM)
+    api.get(PROXY_URL).respond(200, content=b"video-bytes")
+    fail = api.post(f"{API}/internal/jobs/{JOB_ID}/fail").respond(409)
+
+    assert make_worker(RecordingModel(error=RuntimeError("boom")), httpx.Client()).run_once() is True
+
+    assert fail.call_count == 1
+    # A generic HTTP error on /fail is also swallowed, so the log is what shows the 409 was recognised as lease loss.
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("reclaimed before its failure could be reported" in message for message in messages)
+    assert not any("could not report failure" in message for message in messages)

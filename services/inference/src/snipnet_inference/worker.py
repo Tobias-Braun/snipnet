@@ -27,6 +27,10 @@ class ProxyDownloadError(Exception):
     """Downloading the proxy failed. The message deliberately omits the presigned URL and its signature."""
 
 
+class LeaseLostError(Exception):
+    """The API answered 409: the job is no longer ours (lease expired and another worker reclaimed it)."""
+
+
 def parse_court(raw: dict[str, Any] | None) -> Court | None:
     if not raw:
         return None
@@ -111,6 +115,9 @@ class Worker:
                 )
             self._post(job_id, "result", {"workerId": self._settings.worker_id, **prediction_body(prediction)})
             log.info("job %s succeeded", job_id)
+        except LeaseLostError:
+            # Another worker owns the job now, so reporting a failure would disturb its attempt. Just drop the job.
+            log.warning("job %s was reclaimed by another worker, dropping it", job_id)
         except Exception as exc:
             log.exception("job %s failed", job_id)
             self._report_failure(job_id, exc)
@@ -142,6 +149,9 @@ class Worker:
                 self._post(
                     job_id, "progress", {"workerId": self._settings.worker_id, "progress": min(1.0, max(0.0, fraction))}
                 )
+            except LeaseLostError:
+                # Propagates through the model so the run is aborted early instead of burning compute.
+                raise
             except httpx.HTTPError as exc:
                 # A lost progress update only delays the lease extension; it must not abort the analysis.
                 log.warning("progress update for job %s failed: %s", job_id, exc)
@@ -153,10 +163,14 @@ class Worker:
         try:
             error = (str(exc) or type(exc).__name__)[:MAX_ERROR_LENGTH]
             self._post(job_id, "fail", {"workerId": self._settings.worker_id, "error": error, "retryable": retryable})
+        except LeaseLostError:
+            log.warning("job %s was reclaimed before its failure could be reported", job_id)
         except httpx.HTTPError as post_exc:
             # If even the failure report is lost, the lease expires and the job is claimed again.
             log.warning("could not report failure of job %s: %s", job_id, post_exc)
 
     def _post(self, job_id: str, action: str, body: dict[str, Any]) -> None:
         response = self._client.post(self._job_url(job_id, action), json=body, headers=self._headers())
+        if response.status_code == 409:
+            raise LeaseLostError(f"{action} for job {job_id} rejected with 409")
         response.raise_for_status()

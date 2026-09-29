@@ -2,10 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
-import { createMigratedTestSchema, insertVideo } from './helpers/seed.js';
+import {
+  createMigratedTestSchema,
+  insertVideo,
+  PUBLIC_S3_ENDPOINT,
+  withPublicS3Endpoint,
+} from './helpers/seed.js';
 
 const ADMIN = { authorization: 'Bearer test-admin-token-0123456789' };
-const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
 const DAY_SECONDS = 24 * 60 * 60;
 
 interface ExportLine {
@@ -22,9 +26,7 @@ describe('training export', () => {
 
   beforeAll(async () => {
     schema = await createMigratedTestSchema();
-    app = await buildApp({
-      config: { ...schema.config, s3: { ...schema.config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } },
-    });
+    app = await buildApp({ config: withPublicS3Endpoint(schema.config) });
   });
 
   afterAll(async () => {

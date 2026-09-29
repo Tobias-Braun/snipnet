@@ -2,12 +2,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
-import { createMigratedTestSchema, SEED_DURATION_MS, insertVideo } from './helpers/seed.js';
+import {
+  createMigratedTestSchema,
+  insertVideo,
+  SEED_DURATION_MS as DURATION_MS,
+  withPublicS3Endpoint,
+} from './helpers/seed.js';
 
 const INTERNAL = { authorization: 'Bearer test-internal-token-0123456789' };
 const COURT = { roi: { x: 0.1, y: 0.2, width: 0.6, height: 0.7 }, netPoint: { x: 0.4, y: 0.55 } };
-const DURATION_MS = SEED_DURATION_MS;
-const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
 
 interface JobBody {
   id: string;
@@ -35,9 +38,7 @@ describe('job routes', () => {
   beforeAll(async () => {
     schema = await createMigratedTestSchema();
     // A public endpoint that differs from the internal one shows which of them the worker's proxy URL is signed for.
-    app = await buildApp({
-      config: { ...schema.config, s3: { ...schema.config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } },
-    });
+    app = await buildApp({ config: withPublicS3Endpoint(schema.config) });
   });
 
   afterAll(async () => {

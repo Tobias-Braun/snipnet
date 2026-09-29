@@ -1,9 +1,21 @@
 import type { Insertable, Kysely } from 'kysely';
 
+import type { AppConfig } from '../../src/config.js';
 import { createDb } from '../../src/db/client.js';
 import { runMigrations } from '../../src/db/migrate.js';
 import type { Database, VideosTable } from '../../src/db/types.js';
 import { createTestSchema, type TestSchema } from './db.js';
+
+/**
+ * Public S3 endpoint that differs from the internal one, so tests can tell which of the two a presigned URL was
+ * signed for: clients and exports get the public endpoint, the worker the internal one.
+ */
+export const PUBLIC_S3_ENDPOINT = 'http://public-s3.example.test:9000';
+
+/** Returns `config` with its S3 public endpoint set to `PUBLIC_S3_ENDPOINT`. */
+export function withPublicS3Endpoint(config: AppConfig): AppConfig {
+  return { ...config, s3: { ...config.s3, publicEndpoint: PUBLIC_S3_ENDPOINT } };
+}
 
 /** Duration of every video inserted by `insertVideo` unless a test overrides it. */
 export const SEED_DURATION_MS = 90_000;

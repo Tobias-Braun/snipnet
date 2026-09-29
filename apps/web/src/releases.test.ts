@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { detectOs, fetchLatestRelease, pickAsset } from './releases.ts';
+import { detectArch, detectOs, fetchLatestRelease, pickAsset } from './releases.ts';
 
 describe('detectOs', () => {
   it.each([
@@ -43,6 +43,74 @@ describe('pickAsset', () => {
   });
 });
 
+describe('pickAsset by architecture', () => {
+  const assets = [
+    { name: 'Snipnet-1.0.0-x64.dmg', browser_download_url: 'mac-x64' },
+    { name: 'Snipnet-1.0.0-arm64.dmg', browser_download_url: 'mac-arm' },
+    { name: 'Snipnet-1.0.0-amd64.deb', browser_download_url: 'linux-x64' },
+    { name: 'Snipnet-1.0.0-aarch64.AppImage', browser_download_url: 'linux-arm' },
+    { name: 'Snipnet-Setup-1.0.0.exe', browser_download_url: 'win' },
+  ];
+
+  it('prefers the asset carrying the matching arch marker', () => {
+    expect(pickAsset(assets, 'mac', 'arm64')?.browser_download_url).toBe('mac-arm');
+    expect(pickAsset(assets, 'mac', 'x64')?.browser_download_url).toBe('mac-x64');
+    expect(pickAsset(assets, 'linux', 'x64')?.browser_download_url).toBe('linux-x64');
+    expect(pickAsset(assets, 'linux', 'arm64')?.browser_download_url).toBe('linux-arm');
+  });
+
+  it('accepts x86_64 as an x64 marker', () => {
+    const list = [
+      { name: 'snipnet-aarch64.deb', browser_download_url: 'arm' },
+      { name: 'snipnet-x86_64.rpm', browser_download_url: 'x64' },
+    ];
+    expect(pickAsset(list, 'linux', 'x64')?.browser_download_url).toBe('x64');
+  });
+
+  it('prefers an unmarked universal build over a wrong-arch one', () => {
+    const list = [
+      { name: 'snipnet-arm64.dmg', browser_download_url: 'arm' },
+      { name: 'snipnet-universal.dmg', browser_download_url: 'universal' },
+    ];
+    expect(pickAsset(list, 'mac', 'x64')?.browser_download_url).toBe('universal');
+  });
+
+  it('falls back to the first OS match when only the other arch exists or no arch is given', () => {
+    const list = [{ name: 'snipnet-arm64.dmg', browser_download_url: 'arm' }];
+    expect(pickAsset(list, 'mac', 'x64')?.browser_download_url).toBe('arm');
+    expect(pickAsset(assets, 'mac')?.browser_download_url).toBe('mac-x64');
+  });
+});
+
+describe('detectArch', () => {
+  const chrome = (architecture: string) => ({
+    platform: 'MacIntel',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    userAgentData: { getHighEntropyValues: () => Promise.resolve({ architecture }) },
+  });
+
+  it('uses the client hint when available', async () => {
+    await expect(detectArch(chrome('arm'))).resolves.toBe('arm64');
+    await expect(detectArch(chrome('x86'))).resolves.toBe('x64');
+  });
+
+  it('defaults to arm64 on macOS and x64 elsewhere without a hint', async () => {
+    const mac = { platform: 'MacIntel', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' };
+    const win = { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+    await expect(detectArch(mac)).resolves.toBe('arm64');
+    await expect(detectArch(win)).resolves.toBe('x64');
+  });
+
+  it('reads arm from the user agent and survives a rejected hint request', async () => {
+    const nav = {
+      platform: 'Linux aarch64',
+      userAgent: 'Mozilla/5.0 (X11; Linux aarch64)',
+      userAgentData: { getHighEntropyValues: () => Promise.reject(new Error('blocked')) },
+    };
+    await expect(detectArch(nav)).resolves.toBe('arm64');
+  });
+});
+
 describe('fetchLatestRelease', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -66,6 +134,24 @@ describe('fetchLatestRelease', () => {
         { os: 'linux', label: 'Linux', url: 'https://dl/linux.deb' },
       ],
     });
+  });
+
+  it('applies the visitor arch to their own OS only and platform defaults to the others', async () => {
+    const release = {
+      tag_name: 'v2.0.0',
+      assets: [
+        { name: 'snipnet-2.0.0-x64.dmg', browser_download_url: 'mac-x64' },
+        { name: 'snipnet-2.0.0-arm64.dmg', browser_download_url: 'mac-arm' },
+        { name: 'snipnet-2.0.0-arm64.msi', browser_download_url: 'win-arm' },
+        { name: 'snipnet-2.0.0-x64.msi', browser_download_url: 'win-x64' },
+        { name: 'snipnet-2.0.0-arm64.deb', browser_download_url: 'linux-arm' },
+        { name: 'snipnet-2.0.0-amd64.deb', browser_download_url: 'linux-x64' },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify(release))));
+
+    const latest = await fetchLatestRelease(undefined, { os: 'linux', arch: 'arm64' });
+    expect(latest?.options.map((option) => option.url)).toEqual(['mac-arm', 'win-x64', 'linux-arm']);
   });
 
   // The component keeps the releases page link whenever this resolves to null, so each failure mode is pinned here.

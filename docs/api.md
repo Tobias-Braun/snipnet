@@ -77,9 +77,13 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 | Method & path | Body | Response |
 |---|---|---|
 | `POST /internal/jobs/claim` | `{ workerId }` | `200 { job, video, proxyUrl }` or `204` when queue empty. Claims oldest `queued` job (or a `running` job whose lease expired), sets `running`, increments `attempts`, lease 10 min. |
-| `POST /internal/jobs/:id/progress` | `{ progress }` | `204`, extends lease |
-| `POST /internal/jobs/:id/result` | `{ modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
-| `POST /internal/jobs/:id/fail` | `{ error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
+| `POST /internal/jobs/:id/progress` | `{ workerId, progress }` | `204`, extends lease |
+| `POST /internal/jobs/:id/result` | `{ workerId, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
+| `POST /internal/jobs/:id/fail` | `{ workerId, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
+
+`progress`, `result` and `fail` carry the `workerId` that was sent to `claim`. If the job is not `running` or its
+`worker_id` differs (the lease expired and another worker re-claimed the job), the API answers `409` and changes
+nothing; the worker drops the job.
 
 ## Court suggestion (proposal)
 

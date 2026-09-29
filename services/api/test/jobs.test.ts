@@ -114,8 +114,14 @@ describe('job routes', () => {
     return { videoId, jobId: response.json<JobBody>().id, auth: user.auth };
   }
 
-  async function post(url: string, payload: unknown) {
-    return app.inject({ method: 'POST', url, headers: INTERNAL, payload: payload as object });
+  /** Posts as `worker-1`, the worker `claim()` uses by default, unless the payload names another `workerId`. */
+  async function post(url: string, payload: object) {
+    return app.inject({
+      method: 'POST',
+      url,
+      headers: INTERNAL,
+      payload: { workerId: 'worker-1', ...payload },
+    });
   }
 
   describe('analyze', () => {
@@ -458,6 +464,81 @@ describe('job routes', () => {
       const body = { modelVersion: 'm', segments: [], scores: null };
       expect((await post(`/internal/jobs/${jobId}/result`, body)).statusCode).toBe(204);
       expect((await post(`/internal/jobs/${jobId}/result`, body)).statusCode).toBe(409);
+    });
+  });
+
+  describe('lease takeover', () => {
+    /** Worker-1 claims, its lease expires, worker-2 re-claims: worker-1 is now stale. */
+    async function takeOver(): Promise<{ jobId: string; videoId: string }> {
+      await clearJobs();
+      const { jobId, videoId } = await queuedJob();
+      expect((await claim('worker-1')).statusCode).toBe(200);
+      await app.db
+        .updateTable('jobs')
+        .set({ lease_expires_at: new Date(Date.now() - 1000) })
+        .where('id', '=', jobId)
+        .execute();
+      expect((await claim('worker-2')).statusCode).toBe(200);
+      return { jobId, videoId };
+    }
+
+    it('rejects a result from the stale worker and lets the new holder finish', async () => {
+      const { jobId, videoId } = await takeOver();
+      const body = { modelVersion: 'm', segments: [], scores: null };
+
+      expect((await post(`/internal/jobs/${jobId}/result`, body)).statusCode).toBe(409);
+      const job = await app.db
+        .selectFrom('jobs')
+        .selectAll()
+        .where('id', '=', jobId)
+        .executeTakeFirstOrThrow();
+      expect(job).toMatchObject({ status: 'running', worker_id: 'worker-2', attempts: 2 });
+      const sets = await app.db
+        .selectFrom('segment_sets')
+        .select('id')
+        .where('video_id', '=', videoId)
+        .execute();
+      expect(sets).toHaveLength(0);
+
+      expect(
+        (await post(`/internal/jobs/${jobId}/result`, { ...body, workerId: 'worker-2' })).statusCode,
+      ).toBe(204);
+    });
+
+    it('rejects progress and failure reports from the stale worker without side effects', async () => {
+      const { jobId } = await takeOver();
+
+      expect((await post(`/internal/jobs/${jobId}/progress`, { progress: 0.9 })).statusCode).toBe(409);
+      expect(
+        (await post(`/internal/jobs/${jobId}/fail`, { error: 'late', retryable: false })).statusCode,
+      ).toBe(409);
+
+      const job = await app.db
+        .selectFrom('jobs')
+        .selectAll()
+        .where('id', '=', jobId)
+        .executeTakeFirstOrThrow();
+      expect(job).toMatchObject({ status: 'running', worker_id: 'worker-2', progress: 0, error: null });
+    });
+
+    it('requires a workerId on progress, result and fail', async () => {
+      await clearJobs();
+      const { jobId } = await queuedJob();
+      await claim();
+      const bodies = [
+        ['progress', { progress: 0.5 }],
+        ['result', { modelVersion: 'm', segments: [], scores: null }],
+        ['fail', { error: 'x', retryable: false }],
+      ] as const;
+      for (const [action, payload] of bodies) {
+        const response = await app.inject({
+          method: 'POST',
+          url: `/internal/jobs/${jobId}/${action}`,
+          headers: INTERNAL,
+          payload,
+        });
+        expect(response.statusCode, action).toBe(400);
+      }
     });
   });
 

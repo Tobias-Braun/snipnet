@@ -24,10 +24,14 @@ const PROXY_CHANGED_MESSAGE = 'The proxy was changed or removed after the upload
 
 const JobParams = Type.Object({ id: Type.String() });
 
+/** Identifies the worker that claimed the job; reports from any other worker are rejected. */
+const WorkerId = Type.String({ minLength: 1, maxLength: 200 });
+
 const Unit = Type.Number({ minimum: 0, maximum: 1 });
 
 const ResultBody = Type.Object(
   {
+    workerId: WorkerId,
     modelVersion: Type.String({ minLength: 1, maxLength: 200 }),
     segments: Type.Array(SegmentInput),
     scores: Type.Union([
@@ -77,14 +81,18 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
   }
 
   /**
-   * Locks the job row for the rest of the transaction and requires it to be running, so progress, result and
-   * failure reports serialize against each other and against a claim by another worker.
+   * Locks the job row for the rest of the transaction and requires it to be running and held by `workerId`, so
+   * progress, result and failure reports serialize against each other and against a claim by another worker. A
+   * worker whose lease expired and was taken over by another worker is answered with 409 and must drop the job.
    */
-  async function lockRunningJob(trx: Tx, id: string): Promise<Selectable<JobsTable>> {
+  async function lockRunningJob(trx: Tx, id: string, workerId: string): Promise<Selectable<JobsTable>> {
     if (!UUID_PATTERN.test(id)) throw new AppError('not_found', 'Job not found');
     const job = await trx.selectFrom('jobs').selectAll().where('id', '=', id).forUpdate().executeTakeFirst();
     if (job === undefined) throw new AppError('not_found', 'Job not found');
     if (job.status !== 'running') throw new AppError('conflict', `Job is ${job.status}, not running`);
+    if (job.worker_id !== workerId) {
+      throw new AppError('conflict', 'Job is held by another worker, its lease was taken over');
+    }
     return job;
   }
 
@@ -198,13 +206,13 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         tags: ['internal'],
         security,
         params: JobParams,
-        body: Type.Object({ progress: Unit }, { additionalProperties: false }),
+        body: Type.Object({ workerId: WorkerId, progress: Unit }, { additionalProperties: false }),
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
       },
     },
     async (request, reply) => {
       await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id);
+        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
         await trx
           .updateTable('jobs')
           .set({
@@ -234,7 +242,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     async (request, reply) => {
       const { modelVersion, segments, scores } = request.body;
       await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id);
+        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
         const video = await trx
           .selectFrom('videos')
           .selectAll()
@@ -284,7 +292,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         security,
         params: JobParams,
         body: Type.Object(
-          { error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
+          { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
           { additionalProperties: false },
         ),
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
@@ -293,7 +301,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     async (request, reply) => {
       const { error: message, retryable } = request.body;
       await app.db.transaction().execute(async (trx) => {
-        const job = await lockRunningJob(trx, request.params.id);
+        const job = await lockRunningJob(trx, request.params.id, request.body.workerId);
         if (retryable && job.attempts < MAX_ATTEMPTS) {
           // Back to the queue for another worker; the video stays `analyzing`.
           await trx

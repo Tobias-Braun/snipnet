@@ -85,12 +85,14 @@ def test_success_downloads_proxy_runs_model_and_posts_result(api: respx.MockRout
     assert model.court.roi.width == 0.5
     assert model.court.net_point.y == 0.5
     assert json.loads(result.calls[0].request.content) == {
+        "workerId": "w1",
         "modelVersion": "stub-v1",
         "segments": [{"startMs": 1000, "endMs": 2000, "label": "rally", "confidence": 0.9}],
         "scores": {"hz": 1.0, "values": [0.0, 1.0]},
     }
     # The fake clock advances 0.3 s per call, so 10 reports collapse to roughly one per second.
     assert 1 <= progress.call_count <= 4
+    assert all(json.loads(call.request.content)["workerId"] == "w1" for call in progress.calls)
     assert model.video_path is not None
     assert not model.video_path.parent.exists()
 
@@ -108,7 +110,11 @@ def test_model_failure_posts_fail_and_cleans_up(api: respx.MockRouter, error: Ex
 
     assert make_worker(model, httpx.Client()).run_once() is True
 
-    assert json.loads(fail.calls[0].request.content) == {"error": str(error), "retryable": retryable}
+    assert json.loads(fail.calls[0].request.content) == {
+        "workerId": "w1",
+        "error": str(error),
+        "retryable": retryable,
+    }
     assert not result.called
     assert model.video_path is not None
     assert not model.video_path.parent.exists()
@@ -123,6 +129,7 @@ def test_download_failure_is_reported_as_retryable_without_the_presigned_url(api
     make_worker(RecordingModel(), httpx.Client()).run_once()
 
     assert json.loads(fail.calls[0].request.content) == {
+        "workerId": "w1",
         "error": "proxy download failed with HTTP 403",
         "retryable": True,
     }

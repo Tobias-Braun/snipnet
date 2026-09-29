@@ -31,10 +31,20 @@ const JobParams = Type.Object({ id: Type.String() });
 const WorkerId = Type.String({ minLength: 1, maxLength: 200 });
 
 /**
- * The `attempts` value of the job as returned by claim. Unlike the worker id it is unique per claim, so a stale report
+ * The `attempts` value of the job or court detection task as returned by claim. Unlike the worker id it is unique per claim, so a stale report
  * from an earlier attempt is detected even if the same worker id claimed the job again.
  */
 const Attempt = Type.Integer({ minimum: 1 });
+
+/** Outcome of a court detection: the suggestion, or `null` when the detector found no net. */
+const CourtSuggestionReport = Type.Object(
+  {
+    workerId: WorkerId,
+    attempt: Attempt,
+    suggestion: Type.Union([CourtSuggestionBody, Type.Null()]),
+  },
+  { additionalProperties: false },
+);
 
 const Unit = Type.Number({ minimum: 0, maximum: 1 });
 
@@ -55,14 +65,8 @@ const ResultBody = Type.Object(
   { additionalProperties: false },
 );
 
-/** Failure report of a job or a court detection task, sent by the worker that holds the lease. */
+/** Failure report of a job or a court detection task: names the worker and the attempt, see `Attempt`. */
 const FailBody = Type.Object(
-  { workerId: WorkerId, error: Type.String({ maxLength: 4000 }), retryable: Type.Boolean() },
-  { additionalProperties: false },
-);
-
-/** Failure report of a job: additionally names the attempt, see `Attempt`. */
-const JobFailBody = Type.Object(
   {
     workerId: WorkerId,
     attempt: Attempt,
@@ -105,21 +109,12 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
 
   const failResponse = { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error };
 
-  /** Route schema of the failure report of a court detection task. */
+  /** Route schema of the failure report of a job or a court detection task. */
   const failSchema = {
     tags: ['internal'],
     security,
     params: JobParams,
     body: FailBody,
-    response: failResponse,
-  };
-
-  /** Route schema of the failure report of a job. */
-  const jobFailSchema = {
-    tags: ['internal'],
-    security,
-    params: JobParams,
-    body: JobFailBody,
     response: failResponse,
   };
 
@@ -358,7 +353,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     },
   );
 
-  app.post('/jobs/:id/fail', { schema: jobFailSchema }, async (request, reply) => {
+  app.post('/jobs/:id/fail', { schema: failSchema }, async (request, reply) => {
     const { error: message, retryable } = request.body;
     await app.db.transaction().execute(async (trx) => {
       const job = await lockRunningJob(trx, request.params.id, request.body.workerId, request.body.attempt);
@@ -381,7 +376,9 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
    * task that used up its attempts is failed instead. The suggestion just stays null then; the user can still
    * mark the court by hand, so this never blocks the video.
    */
-  async function claimCourtTask(workerId: string): Promise<Selectable<VideosTable> | null> {
+  async function claimCourtTask(
+    workerId: string,
+  ): Promise<{ video: Selectable<VideosTable>; attempt: number } | null> {
     return app.db.transaction().execute(async (trx) => {
       for (;;) {
         const candidate = await trx
@@ -436,20 +433,21 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
           })
           .where('video_id', '=', candidate.video_id)
           .execute();
-        return video;
+        return { video, attempt: candidate.attempts + 1 };
       }
     });
   }
 
   /**
-   * Locks the video's detection task and requires it to be running, so a late report cannot resurrect a task. With
-   * `workerId` the task must also still be leased to that worker: a failure report from a worker whose lease expired
-   * would otherwise requeue the attempt of the worker that took the task over.
+   * Locks the video's detection task and requires it to be running and still held by the reporting claim, so a late
+   * report cannot resurrect a task or finish and fail the attempt of the worker that took it over. The attempt makes
+   * the check exact even when the same worker id claimed the task again.
    */
   async function lockRunningCourtTask(
     trx: Tx,
     videoId: string,
-    workerId?: string,
+    workerId: string,
+    attempt: number,
   ): Promise<Selectable<CourtDetectionTasksTable>> {
     if (!UUID_PATTERN.test(videoId)) throw new AppError('not_found', 'Video not found');
     const task = await trx
@@ -462,11 +460,8 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
     if (task.status !== 'running') {
       throw new AppError('conflict', `Court detection task is ${task.status}, not running`);
     }
-    if (workerId !== undefined && task.worker_id !== workerId) {
-      throw new AppError(
-        'conflict',
-        'Court detection task is held by another worker, its lease was taken over',
-      );
+    if (task.worker_id !== workerId || task.attempts !== attempt) {
+      throw new AppError('conflict', 'Court detection task was claimed again, its lease was taken over');
     }
     return task;
   }
@@ -479,7 +474,11 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         security,
         body: Type.Object({ workerId: WorkerId }, { additionalProperties: false }),
         response: {
-          200: Type.Object({ videoId: Type.String({ format: 'uuid' }), proxyUrl: Type.String() }),
+          200: Type.Object({
+            videoId: Type.String({ format: 'uuid' }),
+            attempt: Attempt,
+            proxyUrl: Type.String(),
+          }),
           204: Type.Null(),
           400: error,
           401: error,
@@ -487,9 +486,10 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
       },
     },
     async (request, reply) => {
-      const video = await claimCourtTask(request.body.workerId);
-      if (video === null) return reply.code(204).send(null);
-      return { videoId: video.id, proxyUrl: await app.storage.presignDownload(video.object_key) };
+      const claimed = await claimCourtTask(request.body.workerId);
+      if (claimed === null) return reply.code(204).send(null);
+      const { video, attempt } = claimed;
+      return { videoId: video.id, attempt, proxyUrl: await app.storage.presignDownload(video.object_key) };
     },
   );
 
@@ -500,13 +500,13 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         tags: ['internal'],
         security,
         params: JobParams,
-        // `null` reports that the detection ran but found no net.
-        body: Type.Union([CourtSuggestionBody, Type.Null()]),
+        // A `null` suggestion reports that the detection ran but found no net.
+        body: CourtSuggestionReport,
         response: { 204: Type.Null(), 400: error, 401: error, 404: error, 409: error },
       },
     },
     async (request, reply) => {
-      const suggestion = request.body;
+      const { workerId, attempt, suggestion } = request.body;
       if (suggestion !== null) {
         const { roi } = suggestion.court;
         if (roi.x + roi.width > 1 + EPSILON || roi.y + roi.height > 1 + EPSILON) {
@@ -514,7 +514,7 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
         }
       }
       await app.db.transaction().execute(async (trx) => {
-        await lockRunningCourtTask(trx, request.params.id);
+        await lockRunningCourtTask(trx, request.params.id, workerId, attempt);
         await trx
           .updateTable('videos')
           .set({
@@ -534,9 +534,9 @@ export const internalRoutes: FastifyPluginCallbackTypebox<{ internalToken: strin
   );
 
   app.post('/videos/:id/court-suggestion/fail', { schema: failSchema }, async (request, reply) => {
-    const { workerId, error: message, retryable } = request.body;
+    const { workerId, attempt, error: message, retryable } = request.body;
     await app.db.transaction().execute(async (trx) => {
-      const task = await lockRunningCourtTask(trx, request.params.id, workerId);
+      const task = await lockRunningCourtTask(trx, request.params.id, workerId, attempt);
       const requeue = retryable && task.attempts < MAX_ATTEMPTS;
       await trx
         .updateTable('court_detection_tasks')

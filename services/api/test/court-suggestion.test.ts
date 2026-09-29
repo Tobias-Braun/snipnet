@@ -61,13 +61,23 @@ describe('court suggestion', () => {
     });
   }
 
-  async function report(videoId: string, payload: unknown) {
+  /** Reports a detection outcome as the claim `workerId` / `attempt` (by default the first claim of worker-1). */
+  async function report(videoId: string, suggestion: unknown, workerId = 'worker-1', attempt = 1) {
     return app.inject({
       method: 'POST',
       url: `/internal/videos/${videoId}/court-suggestion`,
       headers: INTERNAL,
-      payload: payload as object,
+      payload: { workerId, attempt, suggestion },
     });
+  }
+
+  /** Makes the lease of the task expire, so that the next claim takes it over. */
+  async function expireLease(videoId: string) {
+    await app.db
+      .updateTable('court_detection_tasks')
+      .set({ lease_expires_at: new Date(Date.now() - 1000) })
+      .where('video_id', '=', videoId)
+      .execute();
   }
 
   async function fetchVideo(auth: { authorization: string }, videoId: string) {
@@ -85,7 +95,7 @@ describe('court suggestion', () => {
 
     const claimed = await claim();
     expect(claimed.statusCode).toBe(200);
-    expect(claimed.json<{ videoId: string; proxyUrl: string }>()).toMatchObject({ videoId });
+    expect(claimed.json<{ videoId: string; proxyUrl: string }>()).toMatchObject({ videoId, attempt: 1 });
     expect(claimed.json<{ proxyUrl: string }>().proxyUrl).toContain(`court-${String(counter)}.mp4`);
 
     expect((await report(videoId, SUGGESTION)).statusCode).toBe(204);
@@ -100,12 +110,7 @@ describe('court suggestion', () => {
   it('records "no net found" as a null suggestion and does not offer the finished task again', async () => {
     const { user, videoId } = await freshTask('worker-1');
 
-    const response = await app.inject({
-      method: 'POST',
-      url: `/internal/videos/${videoId}/court-suggestion`,
-      headers: { ...INTERNAL, 'content-type': 'application/json' },
-      payload: 'null',
-    });
+    const response = await report(videoId, null);
 
     expect(response.statusCode).toBe(204);
     expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: null });
@@ -124,10 +129,19 @@ describe('court suggestion', () => {
       { court: { ...COURT, roi: { x: 0.6, y: 0.1, width: 0.6, height: 0.5 } }, confidence: 0.5 },
       { court: COURT },
     ];
-    for (const payload of bad) {
-      const response = await report(videoId, payload);
-      expect(response.statusCode, JSON.stringify(payload)).toBe(400);
+    for (const suggestion of bad) {
+      const response = await report(videoId, suggestion);
+      expect(response.statusCode, JSON.stringify(suggestion)).toBe(400);
       expect(response.json()).toMatchObject({ error: { code: 'validation_error' } });
+    }
+    for (const payload of [{ suggestion: SUGGESTION }, { workerId: 'worker-1', suggestion: SUGGESTION }]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/internal/videos/${videoId}/court-suggestion`,
+        headers: INTERNAL,
+        payload,
+      });
+      expect(response.statusCode, JSON.stringify(payload)).toBe(400);
     }
     expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: null });
   });
@@ -135,7 +149,10 @@ describe('court suggestion', () => {
   it('requires the internal token', async () => {
     const { user, videoId } = await freshTask();
     const attempts = [
-      { url: `/internal/videos/${videoId}/court-suggestion`, payload: SUGGESTION },
+      {
+        url: `/internal/videos/${videoId}/court-suggestion`,
+        payload: { workerId: 'w', attempt: 1, suggestion: SUGGESTION },
+      },
       { url: '/internal/court-detection/claim', payload: { workerId: 'w' } },
     ];
     for (const { url, payload } of attempts) {
@@ -154,12 +171,12 @@ describe('court suggestion', () => {
   });
 
   describe('failures', () => {
-    async function fail(videoId: string, retryable: boolean, workerId = 'worker-1') {
+    async function fail(videoId: string, retryable: boolean, workerId = 'worker-1', attempt = 1) {
       return app.inject({
         method: 'POST',
         url: `/internal/videos/${videoId}/court-suggestion/fail`,
         headers: INTERNAL,
-        payload: { workerId, error: 'boom', retryable },
+        payload: { workerId, attempt, error: 'boom', retryable },
       });
     }
 
@@ -176,7 +193,7 @@ describe('court suggestion', () => {
 
       for (let attempt = 1; attempt <= 3; attempt += 1) {
         expect((await claim()).statusCode).toBe(200);
-        expect((await fail(videoId, true)).statusCode).toBe(204);
+        expect((await fail(videoId, true, 'worker-1', attempt)).statusCode).toBe(204);
       }
 
       expect((await claim()).statusCode).toBe(204);
@@ -271,6 +288,32 @@ describe('court suggestion', () => {
 
       expect(stale.statusCode).toBe(409);
       expect(await taskOf(videoId)).toMatchObject({ status: 'running', worker_id: 'worker-2', attempts: 2 });
+    });
+
+    it('rejects stale reports of an earlier attempt when the same workerId re-claimed the task', async () => {
+      const { user, videoId } = await freshTask('shared-worker');
+      await expireLease(videoId);
+      const reclaimed = await claim('shared-worker');
+      expect(reclaimed.json<{ attempt: number }>().attempt).toBe(2);
+
+      const staleFail = await fail(videoId, true, 'shared-worker', 1);
+      const staleResult = await report(videoId, SUGGESTION, 'shared-worker', 1);
+
+      expect([staleFail.statusCode, staleResult.statusCode]).toEqual([409, 409]);
+      expect(await taskOf(videoId)).toMatchObject({ status: 'running', attempts: 2 });
+      expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: null });
+
+      expect((await report(videoId, SUGGESTION, 'shared-worker', 2)).statusCode).toBe(204);
+      expect(await fetchVideo(user.auth, videoId)).toMatchObject({ courtSuggestion: SUGGESTION });
+    });
+
+    it('rejects a result from a worker whose lease was taken over', async () => {
+      const { videoId } = await freshTask('dead-worker');
+      await expireLease(videoId);
+      expect((await claim('worker-2')).statusCode).toBe(200);
+
+      expect((await report(videoId, SUGGESTION, 'dead-worker', 1)).statusCode).toBe(409);
+      expect(await taskOf(videoId)).toMatchObject({ status: 'running', worker_id: 'worker-2' });
     });
   });
 });

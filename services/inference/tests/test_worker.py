@@ -195,7 +195,7 @@ def test_run_survives_api_errors_and_stops_on_request(api: respx.MockRouter) -> 
 
 
 VIDEO_ID = "22222222-2222-4222-8222-222222222222"
-COURT_CLAIM = {"videoId": VIDEO_ID, "proxyUrl": PROXY_URL}
+COURT_CLAIM = {"videoId": VIDEO_ID, "attempt": 2, "proxyUrl": PROXY_URL}
 SUGGESTION_URL = f"{API}/internal/videos/{VIDEO_ID}/court-suggestion"
 COURT = Court.model_validate(
     {"roi": {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6}, "netPoint": {"x": 0.4, "y": 0.5}}
@@ -226,11 +226,15 @@ def test_court_detection_posts_the_suggestion(api: respx.MockRouter, monkeypatch
 
     assert seen == [b"video-bytes"]
     assert json.loads(post.calls[0].request.content) == {
-        "court": {
-            "roi": {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6},
-            "netPoint": {"x": 0.4, "y": 0.5},
+        "workerId": "w1",
+        "attempt": 2,
+        "suggestion": {
+            "court": {
+                "roi": {"x": 0.1, "y": 0.2, "width": 0.5, "height": 0.6},
+                "netPoint": {"x": 0.4, "y": 0.5},
+            },
+            "confidence": 0.83,
         },
-        "confidence": 0.83,
     }
     assert post.calls[0].request.headers["authorization"] == "Bearer tok"
 
@@ -246,7 +250,7 @@ def test_court_detection_posts_null_when_no_net_was_found(
 
     assert make_worker(RecordingModel(), httpx.Client()).run_court_detection_once() is True
 
-    assert json.loads(post.calls[0].request.content) is None
+    assert json.loads(post.calls[0].request.content) == {"workerId": "w1", "attempt": 2, "suggestion": None}
     assert fail.call_count == 0
 
 
@@ -262,6 +266,7 @@ def test_court_detection_invalid_input_is_not_retryable(api: respx.MockRouter, m
     assert post.call_count == 0
     assert json.loads(fail.calls[0].request.content) == {
         "workerId": "w1",
+        "attempt": 2,
         "error": "cannot read video",
         "retryable": False,
     }

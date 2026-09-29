@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -26,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -353,7 +355,9 @@ class ImportPipeline(
                     info.frameRate,
                     size,
                 )
-            val created = api.createVideo(request)
+            // Uncancellable so that a cancelled task still receives the created video's id and can clean it up.
+            val created = withContext(NonCancellable) { api.createVideo(request) }
+            abandonIfRemoved(project.id, created.video.id)
             store.setRemoteVideoId(project.id, created.video.id)
             synchronized(lock) { targets[project.id] = created.upload }
             remember(created.video)
@@ -379,6 +383,27 @@ class ImportPipeline(
         if (video.court != null) return
         val court = store.get(projectId)?.court ?: return
         remember(api.putCourt(video.id, court))
+    }
+
+    /**
+     * A [remove] that ran while `createVideo` was in flight cannot stop a POST that still succeeds: the new video id
+     * would go to a deleted row and the server would keep a `created` video nobody deletes. The project is therefore
+     * checked once the video exists; when it is gone the video is deleted right away (uncancellably, as the task is
+     * already cancelled) and the task ends as cancelled.
+     */
+    private suspend fun abandonIfRemoved(
+        projectId: String,
+        videoId: String,
+    ) {
+        if (store.get(projectId) != null) return
+        withContext(NonCancellable) {
+            try {
+                discard(videoId)
+            } catch (e: ApiError) {
+                // Unreachable server: the local project is removed either way, and there is nothing left to retry.
+            }
+        }
+        throw CancellationException("The project was removed during the upload.")
     }
 
     private fun stillValid(target: UploadTarget): Boolean =

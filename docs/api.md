@@ -86,7 +86,7 @@ A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
 |---|---|---|
 | `POST /internal/jobs/claim` | `{ workerId }` | `200 { job, video, proxyUrl }` or `204` when queue empty. Claims oldest `queued` job (or a `running` job whose lease expired), sets `running`, increments `attempts`, lease 10 min. |
 | `POST /internal/jobs/:id/progress` | `{ workerId, attempt, progress }` | `204`, extends lease |
-| `POST /internal/jobs/:id/result` | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed` |
+| `POST /internal/jobs/:id/result` | `{ workerId, attempt, modelVersion, segments, scores }` | `204`; creates the `prediction` SegmentSet, job → `succeeded`, video → `analyzed`. `409` also when the proxy was replaced or removed since `upload-complete` (job and video are then `failed`, no prediction is stored) |
 | `POST /internal/jobs/:id/fail` | `{ workerId, attempt, error, retryable }` | `204`; retryable and `attempts < 3` → `queued`, else `failed` (video → `failed`) |
 | `POST /internal/court-detection/claim` | `{ workerId }` | `200 { videoId, proxyUrl }` or `204` when no task is queued. Claims the oldest `queued` detection task (or a `running` one whose 10 min lease expired), increments its attempts. |
 | `POST /internal/videos/:id/court-suggestion` | `CourtSuggestion` or JSON `null` (no net found) | `204`; sets `Video.courtSuggestion` and finishes the task. `400` for values outside `[0, 1]` or a ROI leaving the frame, `404` unknown video or no task, `409` task not `running` |
@@ -141,9 +141,15 @@ The first successful `upload-complete` records the object's ETag. The upload URL
 after that, so when a worker claims a job (`POST /internal/jobs/claim`) the API compares the stored object with the
 recorded ETag; if the proxy was overwritten or removed in the meantime, the job and the video are set to `failed`
 (job `error`: the proxy was changed or removed after the upload was confirmed) and the claim moves on to the next
-job. The client re-uploads by creating a new video. An overwrite after the claim is not detected. If the object
-store cannot be reached during that check, the claim answers `500` and leaves the job as it was, without spending
-an attempt.
+job. The client re-uploads by creating a new video. If the object store cannot be reached during that check, the
+claim answers `500` and leaves the job as it was, without spending an attempt.
+
+The same comparison runs twice more, so an overwrite after the claim is detected as well. `POST
+/internal/jobs/:id/result` checks the ETag before storing the prediction: on a mismatch (or a removed object) no
+prediction is stored, the job and the video are set to `failed` with the same error, and the worker gets `409`. The
+training export (`GET /v1/admin/training-export`) checks it per video and silently skips a video whose proxy no
+longer matches, because its prediction and labels describe another file. Videos without a recorded ETag are not
+checked.
 
 `DELETE /v1/videos/:id` is refused with `409` while the video has a `running` job, so a worker never loses its video
 mid-analysis; the client retries once the job has succeeded or failed. A job that is still `queued` has reached no

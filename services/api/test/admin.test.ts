@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { buildApp } from '../src/app.js';
 import type { TestSchema } from './helpers/db.js';
@@ -157,6 +157,39 @@ describe('training export', () => {
     expect(exported).not.toContain(notFinal.videoId);
     expect(exported).not.toContain(noEdits.videoId);
     expect(exported).not.toContain(noConsent.videoId);
+  });
+
+  it('skips a video whose proxy changed after the upload was confirmed, and keeps one that did not', async () => {
+    const userId = await newUser(true);
+    const overwritten = await newVideo(userId);
+    const intact = await newVideo(userId);
+    for (const video of [overwritten, intact]) {
+      await newSet(video.videoId, 'user', video.predictionId, true);
+    }
+    // The object store reports an ETag derived from the key; the overwritten video recorded another one.
+    const recorded = { [overwritten.videoId]: '"old"', [intact.videoId]: null as string | null };
+    for (const [id, etag] of Object.entries(recorded)) {
+      const row = await app.db
+        .selectFrom('videos')
+        .select('object_key')
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+      await app.db
+        .updateTable('videos')
+        .set({ proxy_etag: etag ?? `"etag-${row.object_key}"` })
+        .where('id', '=', id)
+        .execute();
+    }
+    const objectInfo = vi
+      .spyOn(app.storage, 'objectInfo')
+      .mockImplementation((key) => Promise.resolve({ sizeBytes: 2048, etag: `"etag-${key}"` }));
+    try {
+      const exported = (await exportLines()).map((entry) => entry.video.id);
+      expect(exported).toContain(intact.videoId);
+      expect(exported).not.toContain(overwritten.videoId);
+    } finally {
+      objectInfo.mockRestore();
+    }
   });
 
   it('follows consent changes, so withdrawing it removes the videos from the export', async () => {

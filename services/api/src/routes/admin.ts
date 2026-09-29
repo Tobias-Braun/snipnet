@@ -4,7 +4,7 @@ import type { FastifyPluginCallbackTypebox } from '@fastify/type-provider-typebo
 import { sql, type Selectable } from 'kysely';
 import Type from 'typebox';
 
-import type { SegmentSetsTable } from '../db/types.js';
+import type { SegmentSetsTable, VideosTable } from '../db/types.js';
 import { requireInternalToken } from '../plugins/internal-auth.js';
 import { toSegmentSet, toVideo } from '../serialize.js';
 
@@ -105,6 +105,13 @@ export const adminRoutes: FastifyPluginCallbackTypebox<{ adminToken: string }> =
     );
   }
 
+  /** Whether the stored proxy still has the ETag recorded at upload-complete. Videos without one are not checked. */
+  async function proxyIsUnchanged(video: Selectable<VideosTable>): Promise<boolean> {
+    if (video.proxy_etag === null) return true;
+    const object = await app.storage.objectInfo(video.object_key);
+    return object?.etag === video.proxy_etag;
+  }
+
   /**
    * Yields one NDJSON line per exportable video. Pages are keyed on the final set's `(created_at, id)`, so the
    * export needs no server-side state and stays consistent while rows are inserted concurrently.
@@ -123,6 +130,9 @@ export const adminRoutes: FastifyPluginCallbackTypebox<{ adminToken: string }> =
           .executeTakeFirst();
         // Deleted since its page was read; failing here would cut off the rest of an otherwise valid export.
         if (video === undefined) continue;
+        // The proxy was replaced through the still-valid upload URL after it was confirmed, so the prediction and
+        // the final labels no longer describe the file behind `proxyUrl`; exporting it would poison the training set.
+        if (!(await proxyIsUnchanged(video))) continue;
         yield `${JSON.stringify({
           video: toVideo(video, undefined),
           proxyUrl: await app.storage.presignExportDownload(video.object_key),

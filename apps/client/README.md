@@ -83,3 +83,27 @@ Only the FFmpeg natives of the machine running Gradle are pulled in. To build in
 (macOS arm64/x64, Windows x64, Linux x64) from one machine, pass `-PallNativePlatforms`. Tests generate their clips
 with the bundled ffmpeg; `SNIPNET_BENCHMARK=1 ./gradlew :desktopApp:test --tests '*VideoBenchmark*' -i` prints the
 decode and seek measurements from the ADR.
+
+## Packaging and releases
+
+`nativeDistributions` in `desktopApp/build.gradle.kts` builds a DMG (macOS), MSI (Windows) and DEB (Linux) with the
+icons in `desktopApp/packaging/` (`icon.icns`, `icon.ico`, `icon.png`, all rendered from one 1024 px master).
+Installers can only be built on their own operating system:
+
+```
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
+./gradlew :desktopApp:packageDmg   # or packageMsi / packageDeb
+# output: desktopApp/build/compose/binaries/main/{dmg,msi,deb}/
+```
+
+Homebrew's JDK is refused by the Compose packaging check locally; use another vendor's JDK (Temurin, Corretto) or
+pass `-Pcompose.desktop.packaging.checkJdkVendor=false`.
+
+The installer version comes from `-PappVersion=<tag>`, for example `-PappVersion=v1.2.3`. The leading `v` and any
+pre-release suffix are dropped because jpackage accepts only numeric `MAJOR.MINOR.PATCH`; without the property the
+version is `1.0.0`. macOS rejects a major version of 0, so a `v0.x.y` tag produces a `1.x.y` DMG.
+
+Releasing: push a tag such as `v1.2.3`. `.github/workflows/release.yml` builds the three installers on macOS,
+Windows and Linux runners and attaches them to a GitHub Release (tags with a `-` suffix are marked as
+pre-releases). The installers are unsigned, so macOS Gatekeeper and Windows SmartScreen warn on first start; code
+signing and notarization are tracked separately.

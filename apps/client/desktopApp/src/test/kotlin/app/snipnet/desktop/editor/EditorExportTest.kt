@@ -157,6 +157,17 @@ class EditorExportTest {
     }
 
     @Test
+    fun edlCannotBeChosenAgainOnceKnownUnsupported() {
+        val holder = holder(ScriptedExporter { _, _ -> emptyList() }, fps = 120.0)
+        holder.openExport()
+        holder.setExportOptions { it.copy(mode = ExportMode.Fcpxml) }
+        holder.setExportOptions { it.copy(mode = ExportMode.Edl) }
+        assertEquals(ExportMode.Fcpxml, holder.state.value.export.options.mode)
+        holder.setExportOptions { it.copy(mode = ExportMode.SingleVideo) }
+        assertEquals(ExportMode.SingleVideo, holder.state.value.export.options.mode)
+    }
+
+    @Test
     fun ordinaryFrameRatesKeepEdlAvailable() {
         val holder = holder(ScriptedExporter { _, _ -> emptyList() })
         holder.setExportOptions { it.copy(mode = ExportMode.Edl) }

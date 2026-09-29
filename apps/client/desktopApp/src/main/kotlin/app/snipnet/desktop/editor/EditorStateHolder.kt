@@ -580,7 +580,15 @@ class EditorStateHolder(
     private fun checkEdlSupport() {
         val original = originalPath ?: return
         scope.launch {
-            val fps = runCatching { ProjectFiles.edlUnsupportedFps(engine.probe(original)) }.getOrNull()
+            // A failed probe leaves EDL selectable; ProjectFiles.edl still refuses unsupported rates at export time.
+            val fps =
+                try {
+                    ProjectFiles.edlUnsupportedFps(engine.probe(original))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
             update { s ->
                 val options = s.export.options
                 val fallback = fps != null && options.mode == ExportMode.Edl && !s.export.running
@@ -595,10 +603,12 @@ class EditorStateHolder(
         }
     }
 
-    /** Changes the dialog choices; ignored while an export runs. */
+    /** Changes the dialog choices; ignored while an export runs, and EDL stays unselectable once known unsupported. */
     fun setExportOptions(transform: (ExportOptions) -> ExportOptions) =
         update { s ->
-            if (s.export.running) s else s.copy(export = s.export.copy(options = transform(s.export.options)))
+            val changed = transform(s.export.options)
+            val blocked = changed.mode == ExportMode.Edl && s.export.edlUnsupportedFps != null
+            if (s.export.running || blocked) s else s.copy(export = s.export.copy(options = changed))
         }
 
     /**

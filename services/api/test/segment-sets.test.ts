@@ -266,6 +266,7 @@ describe('segment set routes', () => {
           isFinal: false,
         });
         expect(response.statusCode, parentSetId).toBe(400);
+        expect(response.json<{ error: { code: string } }>().error.code, parentSetId).toBe('validation_error');
       }
 
       const missing = await save(user.auth, first.videoId, { segments, editLog: null, isFinal: false });

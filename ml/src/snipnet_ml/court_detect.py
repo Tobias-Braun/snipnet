@@ -39,7 +39,8 @@ HIGH_CONFIDENCE = 0.7
 ANALYSIS_WIDTH = 320
 
 _MIN_RING_PIXELS = 24
-# Flattest ellipse (minor / major axis) still accepted, i.e. the lowest camera angle the detector copes with.
+# Flattest ellipse (minor / major axis) the shape check accepts. The residual below is measured relative to the
+# minor axis, so in practice rims flatter than about 1:4 at analysis resolution already fail as "not a ring".
 _MIN_AXIS_RATIO = 0.12
 # Median distance of the pixels from the fitted ellipse, relative to its size, above which a blob is not a ring.
 _MAX_RESIDUAL = 0.2
@@ -251,6 +252,9 @@ def sample_frames(path: str | Path, count: int = _VIDEO_SAMPLES) -> list[np.ndar
     frames: list[np.ndarray] = []
     try:
         with av.open(str(path)) as container:
+            # An audio-only upload would otherwise surface as an IndexError the worker treats as retryable.
+            if not container.streams.video:
+                raise InvalidInputError("video has no video stream")
             stream = container.streams.video[0]
             duration = float(container.duration / av.time_base) if container.duration else 0.0
             if duration <= 0:

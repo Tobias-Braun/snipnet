@@ -13,7 +13,7 @@ from snipnet_ml.court_detect import (
     suggest_from_frames,
     suggested_roi,
 )
-from snipnet_ml.model import Point
+from snipnet_ml.model import InvalidInputError, Point
 
 WIDTH, HEIGHT = 480, 270
 YELLOW = (240, 220, 20)
@@ -193,3 +193,21 @@ def test_detect_court_reads_frames_from_a_video(tmp_path) -> None:
     assert suggestion is not None
     assert suggestion.confidence >= HIGH_CONFIDENCE
     assert suggestion.court.net_point.x == pytest.approx(0.5, abs=0.02)
+
+
+def test_detect_court_rejects_a_file_that_is_not_a_video(tmp_path) -> None:
+    garbage = tmp_path / "broken.mp4"
+    garbage.write_bytes(b"not a video at all")
+    with pytest.raises(InvalidInputError):
+        detect_court(garbage)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
+def test_detect_court_rejects_audio_only_media(tmp_path) -> None:
+    audio = tmp_path / "audio.mp4"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "aac", str(audio)],
+        check=True,
+    )
+    with pytest.raises(InvalidInputError):
+        detect_court(audio)

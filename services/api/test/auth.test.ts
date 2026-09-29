@@ -212,6 +212,34 @@ describe('auth routes', () => {
       expect(limited.json()).toMatchObject({ error: { code: 'rate_limited' } });
     });
 
+    it('keys the limit on X-Forwarded-For only when the proxy is trusted', async () => {
+      const attemptFrom = (client: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/v1/auth/login',
+          headers: { 'x-forwarded-for': client },
+          payload: { email: 'nobody@example.com', password: 'whatever password' },
+        });
+      const exhaust = async (client: (i: number) => string) => {
+        const statuses: number[] = [];
+        for (let i = 0; i <= LOGIN_RATE_LIMIT.max; i += 1) {
+          statuses.push((await attemptFrom(client(i))).statusCode);
+        }
+        return statuses;
+      };
+
+      // Untrusted: every request counts against the peer (127.0.0.1) whatever the header claims.
+      app = await buildApp({ config: { ...schema.config, trustProxy: false } });
+      const untrusted = await exhaust((i) => `198.51.100.${String(i)}`);
+      expect(untrusted).toEqual([...Array<number>(LOGIN_RATE_LIMIT.max).fill(401), 429]);
+
+      // Trusted: the peer is the proxy, so each distinct client address gets its own budget.
+      await app.close();
+      app = await buildApp({ config: { ...schema.config, trustProxy: '127.0.0.1' } });
+      const trusted = await exhaust((i) => `198.51.100.${String(i)}`);
+      expect(trusted).toEqual(Array<number>(LOGIN_RATE_LIMIT.max + 1).fill(401));
+    });
+
     it('does not rate limit registration', async () => {
       await newApp();
       const responses = await Promise.all(

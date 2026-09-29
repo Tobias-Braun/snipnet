@@ -124,6 +124,21 @@ describe('POST /v1/waitlist', () => {
     expect(otherIp.statusCode).toBe(202);
   });
 
+  it('ignores X-Forwarded-For while TRUST_PROXY is off, so a client cannot dodge the limit by forging it', async () => {
+    await newApp(2);
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const response = await signUp(
+        { email: `f${String(i)}@example.com` },
+        { 'x-forwarded-for': `198.51.100.${String(i)}` },
+      );
+      statuses.push(response.statusCode);
+    }
+
+    expect(statuses).toEqual([202, 202, 429]);
+  });
+
   it('behind a trusted proxy, limits by the address the proxy appended, not a client-forged one', async () => {
     // Injected requests come from 127.0.0.1, which plays the reverse proxy here.
     await newApp(2, '127.0.0.1');

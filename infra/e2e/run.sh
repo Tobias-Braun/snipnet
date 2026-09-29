@@ -12,7 +12,7 @@ cd "$root"
 
 # Asks the kernel for an unused port; there is a small race until Docker binds it, which is acceptable here.
 free_port() {
-  uv run python -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+  uv run --no-build python -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
 sh infra/init-env.sh >/dev/null
@@ -38,4 +38,4 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 $compose up -d --build --wait api worker
-E2E_API_URL="http://localhost:${API_PORT}" uv run pytest infra/e2e -v -s -p no:cacheprovider
+E2E_API_URL="http://localhost:${API_PORT}" uv run --no-build pytest infra/e2e -v -s -p no:cacheprovider

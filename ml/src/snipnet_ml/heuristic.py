@@ -44,6 +44,9 @@ HEURISTIC_VERSION = "heuristic-v0.1"
 # Used when the caller did not provide a court: the whole frame is treated as the court.
 _FULL_FRAME = Roi(x=0.0, y=0.0, width=1.0, height=1.0)
 
+# Share of the reported progress that belongs to feature extraction; the rest is the cheap post-processing.
+_EXTRACTION_SHARE = 0.9
+
 
 @dataclass(frozen=True)
 class HeuristicParams:
@@ -279,11 +282,19 @@ class HeuristicModel:
         duration_ms = probe_duration_ms(video_path)
         roi = court.roi if court else _FULL_FRAME
         try:
-            table = extract_features(video_path, roi, self.features, self.cache_dir)
+            table = extract_features(
+                video_path,
+                roi,
+                self.features,
+                self.cache_dir,
+                # Feature extraction is the long part; it owns 0..0.9 of the progress so the worker's lease is
+                # extended regularly while it runs.
+                lambda fraction: progress(fraction * _EXTRACTION_SHARE),
+            )
         except ValueError as exc:
             # extract_features raises ValueError only when nothing could be decoded (e.g. no video stream).
             raise InvalidInputError(str(exc)) from exc
-        progress(0.9)
+        progress(_EXTRACTION_SHARE)
         prediction = predict_from_features(table, duration_ms, self.params)
         progress(1.0)
         return prediction

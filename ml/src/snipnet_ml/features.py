@@ -23,7 +23,7 @@ import math
 import os
 import tempfile
 import zipfile
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -356,11 +356,43 @@ def audio_features(samples: np.ndarray, config: FeatureConfig, n_windows: int) -
     return mean, peak, count
 
 
-def compute_features(path: str | Path, roi: Roi, config: FeatureConfig | None = None) -> FeatureFrame:
-    """Decode `path` and compute the feature table without touching any cache."""
+def _report_decode_progress(
+    frames: Iterable[tuple[float, np.ndarray]], duration_s: float, on_progress: Callable[[float], None]
+) -> Iterator[tuple[float, np.ndarray]]:
+    """Pass frames through unchanged while reporting the decoded fraction (frame time / duration) in 0..1.
+
+    The reported value never decreases and never exceeds 1, even if frame timestamps jitter or the container
+    duration is slightly too short.
+    """
+    reported = 0.0
+    for time_s, frame in frames:
+        fraction = min(1.0, time_s / duration_s)
+        if fraction > reported:
+            reported = fraction
+            on_progress(fraction)
+        yield time_s, frame
+
+
+def compute_features(
+    path: str | Path,
+    roi: Roi,
+    config: FeatureConfig | None = None,
+    on_progress: Callable[[float], None] | None = None,
+) -> FeatureFrame:
+    """Decode `path` and compute the feature table without touching any cache.
+
+    `on_progress`, if given, is called repeatedly with the fraction (0..1, non-decreasing) of the video decoded so
+    far, so callers holding a lease can prove they are alive during the long video decode. It is not called when
+    the container declares no duration.
+    """
     config = config or FeatureConfig()
+    frames = decode_gray_frames(path, config.fps)
+    if on_progress is not None:
+        declared = probe_duration(path)
+        if declared > 0:
+            frames = _report_decode_progress(frames, declared, on_progress)
     try:
-        motion = motion_series(decode_gray_frames(path, config.fps), roi, config.roi_expand)
+        motion = motion_series(frames, roi, config.roi_expand)
     except ValueError as error:
         raise ValueError(f"{error} from {path}") from error
     samples = decode_audio(path, config.sample_rate)
@@ -384,12 +416,19 @@ def compute_features(path: str | Path, roi: Roi, config: FeatureConfig | None = 
 
 
 def extract_features(
-    path: str | Path, roi: Roi, config: FeatureConfig | None = None, cache_dir: str | Path | None = None
+    path: str | Path,
+    roi: Roi,
+    config: FeatureConfig | None = None,
+    cache_dir: str | Path | None = None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> FeatureFrame:
-    """Return the feature table for a video, reading and writing the `.npz` cache when `cache_dir` is given."""
+    """Return the feature table for a video, reading and writing the `.npz` cache when `cache_dir` is given.
+
+    `on_progress` is forwarded to `compute_features`; a cache hit performs no decoding and reports nothing.
+    """
     config = config or FeatureConfig()
     if cache_dir is None:
-        return compute_features(path, roi, config)
+        return compute_features(path, roi, config, on_progress)
     cache_file = Path(cache_dir) / f"{cache_key(hash_video(path), roi, config)}.npz"
     if cache_file.exists():
         try:
@@ -397,7 +436,7 @@ def extract_features(
         except (ValueError, KeyError, OSError, EOFError, zipfile.BadZipFile):
             # A truncated or foreign cache file is simply recomputed and overwritten.
             pass
-    result = compute_features(path, roi, config)
+    result = compute_features(path, roi, config, on_progress)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     # Write to a unique temporary file and rename it into place, so a crash or a concurrent worker never leaves a
     # half-written file under the final name.

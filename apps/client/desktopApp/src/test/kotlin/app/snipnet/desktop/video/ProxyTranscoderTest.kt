@@ -1,8 +1,11 @@
 package app.snipnet.desktop.video
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -99,5 +102,29 @@ class ProxyTranscoderTest {
             assertTrue(job.isCancelled)
             assertFalse(Files.exists(output))
             assertFalse(Files.exists(output.resolveSibling("long-proxy.mp4.part")))
+        }
+
+    /**
+     * Killing ffmpeg can close its pipes under a blocked read, which used to surface as an IOException ("Stream
+     * closed") instead of a cancellation. Cancelling at varying moments must always end as a cancellation.
+     */
+    @Test
+    fun cancellingRepeatedlyAlwaysEndsAsCancellation() =
+        runBlocking {
+            val source = TestClips.benchmarkClip(tmp.resolve("repeat.mp4"), "1280x720", 60)
+            repeat(8) { attempt ->
+                val output = tmp.resolve("repeat-proxy-$attempt.mp4")
+                val started = CompletableDeferred<Unit>()
+                val job =
+                    async(Dispatchers.Default) {
+                        transcoder.transcode(source, output, 60_000) { started.complete(Unit) }
+                    }
+                withTimeout(60_000) { started.await() }
+                delay(attempt * 15L)
+                job.cancel()
+                assertFailsWith<CancellationException> { job.await() }
+                assertFalse(Files.exists(output))
+                assertFalse(Files.exists(output.resolveSibling("repeat-proxy-$attempt.mp4.part")))
+            }
         }
 }

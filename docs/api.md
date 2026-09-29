@@ -98,7 +98,8 @@ or its `attempts` differs from `attempt` (the lease expired and the job was re-c
 same `workerId`), the API answers `409` and changes nothing. The attempt makes the check exact even when two workers
 share a `workerId`. A missing `workerId` or `attempt` is a `400`. Court detection does not use `attempt`. The worker
 treats the `409` as "lease lost": it drops the job without posting `fail`, and a `409` on `progress` also aborts the
-model run early.
+model run early. A `409` on the result can also mean the proxy changed after `upload-complete`, so the worker logs the
+message of the response's error envelope rather than assuming a reclaim.
 
 For court detection only the failure report carries the `workerId`: a result from a worker whose lease expired is
 still a valid detection of the same proxy, so it is accepted while the task is `running`, whereas a stale failure

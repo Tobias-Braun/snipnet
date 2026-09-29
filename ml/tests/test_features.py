@@ -147,6 +147,7 @@ def test_throughput_is_at_least_20x_realtime(tmp_path, capsys) -> None:
     assert speed >= 20
 
 
+@needs_ffmpeg
 def test_wrappers_share_the_resampling_of_decode_frames(tmp_path) -> None:
     from snipnet_ml.persons import decode_rgb_frames
 

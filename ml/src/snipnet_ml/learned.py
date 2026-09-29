@@ -27,14 +27,13 @@ from torch import nn
 
 from snipnet_ml.embeddings import EmbeddingConfig, VisualEmbedder, WindowEmbeddings, extract_embeddings
 from snipnet_ml.features import FeatureConfig, FeatureFrame, extract_features
-from snipnet_ml.heuristic import HeuristicParams, build_segments, viterbi_states
+from snipnet_ml.heuristic import HeuristicParams, build_segments, video_duration_ms, viterbi_states
 from snipnet_ml.labels import Court, Roi
 from snipnet_ml.model import (
     InvalidInputError,
     Prediction,
     ProgressCallback,
     ScoreCurve,
-    probe_duration_ms,
 )
 from snipnet_ml.persons import select_device
 
@@ -246,7 +245,7 @@ class LearnedModel:
 
     def predict(self, video_path: Path, court: Court | None, progress: ProgressCallback) -> Prediction:
         progress(0.0)
-        duration_ms = probe_duration_ms(video_path)
+        duration_ms = video_duration_ms(video_path)
         roi = court.roi if court else _FULL_FRAME
         try:
             features = compute_window_features(

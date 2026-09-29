@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from snipnet_ml.features import FeatureConfig, FeatureFrame, extract_features
+from snipnet_ml.features import FeatureConfig, FeatureFrame, extract_features, video_duration
 from snipnet_ml.labels import Court, Roi
 from snipnet_ml.model import (
     InvalidInputError,
@@ -248,6 +248,18 @@ def _merge_close_runs(runs: list[list[int]], window_s: float, min_gap_s: float) 
     return merged
 
 
+def video_duration_ms(video_path: Path) -> int:
+    """Length of the video in milliseconds that predicted segments are clamped to.
+
+    `probe_duration_ms` validates the file and supplies the declared duration, but Matroska proxies written with a
+    timestamp offset declare the absolute end time there, so padding a rally at the end of such a video would push
+    `endMs` past the real end. The declared value is therefore bounded by the origin-relative content end.
+    """
+    declared_ms = probe_duration_ms(video_path)
+    content_ms = round(video_duration(video_path) * 1000)
+    return min(declared_ms, content_ms) if content_ms > 0 else declared_ms
+
+
 def predict_from_features(table: FeatureFrame, duration_ms: int, params: HeuristicParams) -> Prediction:
     """Everything after feature extraction; separated so it can be tested and tuned on cached features."""
     window_s = float(table.t_end[0] - table.t_start[0])
@@ -276,7 +288,7 @@ class HeuristicModel:
 
     def predict(self, video_path: Path, court: Court | None, progress: ProgressCallback) -> Prediction:
         progress(0.0)
-        duration_ms = probe_duration_ms(video_path)
+        duration_ms = video_duration_ms(video_path)
         roi = court.roi if court else _FULL_FRAME
         try:
             table = extract_features(video_path, roi, self.features, self.cache_dir)

@@ -503,6 +503,7 @@ describe('video routes', () => {
         });
 
         expect(response.statusCode).toBe(409);
+        expect(response.json()).toMatchObject({ error: { code: 'conflict' } });
         expect(await objectExists(key)).toBe(true);
         const fetched = await app.inject({
           method: 'GET',
@@ -525,6 +526,12 @@ describe('video routes', () => {
       });
 
       expect(response.statusCode).toBe(204);
+      const fetched = await app.inject({
+        method: 'GET',
+        url: `/v1/videos/${video.id}`,
+        headers: user.auth,
+      });
+      expect(fetched.statusCode).toBe(404);
     });
 
     it('works for a video that was never uploaded', async () => {

@@ -23,6 +23,7 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 | `state` | `StateHolder`, the ViewModel-like base class. |
 | `window` | Window geometry persistence (`window.json` in the data directory). |
 | `auth` | `Session` (login, register, restore, logout), `TokenStore` (`token` file, mode 600) and `AuthStateHolder`. |
+| `video` | `VideoEngine` (probe, open a player, thumbnails, waveform) on FFmpeg through JavaCV, and `ffmpegPath()` for the bundled `ffmpeg` executable. See `docs/adr/0001-video-engine.md`. |
 | `ui` | Composables. Screens are placeholders until their features land. |
 
 The data directory is `~/.snipnet`, or `$SNIPNET_DATA_DIR` when set. Local projects live in `snipnet.db` there.
@@ -71,3 +72,10 @@ class ProjectsStateHolder(private val api: SnipnetApi, dispatcher: CoroutineDisp
 
 `Navigator.push`, `back` and `resetTo` change the stack; `resetTo` is used for login and logout so back cannot
 return to a screen of the previous session. Add a destination by adding a `Screen` subtype and a branch in `App`.
+
+## Video engine natives
+
+Only the FFmpeg natives of the machine running Gradle are pulled in. To build installers for every supported system
+(macOS arm64/x64, Windows x64, Linux x64) from one machine, pass `-PallNativePlatforms`. Tests generate their clips
+with the bundled ffmpeg; `SNIPNET_BENCHMARK=1 ./gradlew :desktopApp:test --tests '*VideoBenchmark*' -i` prints the
+decode and seek measurements from the ADR.

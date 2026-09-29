@@ -143,7 +143,10 @@ after that, so when a worker claims a job (`POST /internal/jobs/claim`) the API 
 recorded ETag; if the proxy was overwritten or removed in the meantime, the job and the video are set to `failed`
 (job `error`: the proxy was changed or removed after the upload was confirmed) and the claim moves on to the next
 job. The client re-uploads by creating a new video. If the object store cannot be reached during that check, the
-claim answers `500` and leaves the job as it was, without spending an attempt.
+claim answers `500` and leaves the job as it was, without spending an attempt. `POST /internal/court-detection/claim`
+runs the same check: on a mismatch the detection task is set to `failed` with the same error (no attempt spent,
+`courtSuggestion` stays `null`) and the claim moves on to the next task. The video's status is left to the analyze
+job's own claim.
 
 The same comparison runs twice more, so an overwrite after the claim is detected as well. `POST
 /internal/jobs/:id/result` checks the ETag before storing the prediction: on a mismatch (or a removed object) no

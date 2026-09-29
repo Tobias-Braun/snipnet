@@ -64,6 +64,14 @@ Segments in a set are sorted by `startMs`, non-overlapping, `0 <= startMs < endM
 | `POST /v1/waitlist` | `{ email, source? }` | `202 {}` (idempotent, rate limited per IP) |
 | `GET /v1/admin/training-export?since=<iso>` | – | `200` NDJSON, one line per video with a final user set of a consenting user: `{ video, proxyUrl, prediction: SegmentSet, final: SegmentSet }` |
 
+### Training export
+
+`GET /v1/admin/training-export` streams `application/x-ndjson`. `since` (ISO-8601) keeps final sets created at or
+after that instant, so an incremental export passes the newest `final.createdAt` it has seen (lines may repeat).
+A video with several final user sets appears once, with its newest one; `prediction` is the prediction that set
+descends from via `parentSetId`. `proxyUrl` is valid for 24 hours and signed for the public storage endpoint.
+A missing or wrong `ADMIN_TOKEN` yields `401`, a malformed `since` yields `400`.
+
 ## Internal (worker) endpoints
 
 | Method & path | Body | Response |

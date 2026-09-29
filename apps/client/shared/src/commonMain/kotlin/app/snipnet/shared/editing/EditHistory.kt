@@ -8,7 +8,8 @@ import app.snipnet.shared.model.EditOp
  *
  * The [editLog] is the list of [EditOp]s for everything currently applied, in order: undo removes the last entry
  * and redo puts it back, so the log always describes how the original prediction became the current segments and
- * can be uploaded as is.
+ * can be uploaded as is. Ops that only touched rejected segments have empty `before` and `after` (the API has no
+ * accepted flag) and carry no training signal, so they are left out of the log; they stay undoable.
  *
  * Drags produce a stream of tiny edits. Passing the same non-null `gestureKey` to [apply] for each of them
  * coalesces them into a single undo step and a single log entry whose `before` is the state at drag start and
@@ -33,7 +34,7 @@ data class EditHistory(
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
     val canRedo: Boolean get() = redoStack.isNotEmpty()
-    val editLog: List<EditOp> get() = undoStack.map { it.op }
+    val editLog: List<EditOp> get() = undoStack.map { it.op }.filter { it.before.isNotEmpty() || it.after.isNotEmpty() }
 
     /** Applies [edit], or returns this unchanged when it is null (an operation that was a no-op). */
     fun apply(

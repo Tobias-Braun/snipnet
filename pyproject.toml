@@ -18,6 +18,15 @@ members = ["ml", "services/inference"]
 [tool.uv.sources]
 snipnet-ml = { workspace = true }
 snipnet-inference = { workspace = true }
+# On Linux the default PyPI wheels of torch bundle several GB of CUDA libraries. CI and the docker images run on
+# CPU, so Linux resolves to the CPU-only wheels; macOS wheels from PyPI already support MPS.
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+torchvision = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.ruff]
 line-length = 120

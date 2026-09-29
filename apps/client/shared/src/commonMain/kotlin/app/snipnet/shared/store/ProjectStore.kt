@@ -230,6 +230,20 @@ class ProjectStore(
     fun delete(id: String) = queries.deleteById(id)
 
     /**
+     * Deletes project [id] and records [remoteVideoId] as a pending server delete in one transaction. With two
+     * separate writes a crash in between would lose the server video's id for good, and queueing first would let the
+     * remote delete run while the local project still exists. As with [addPendingVideoDelete], nothing is queued when
+     * nobody is signed in; the project is deleted regardless.
+     */
+    fun deleteAndQueueRemoteDelete(
+        id: String,
+        remoteVideoId: String,
+    ) = queries.transaction {
+        queries.deleteById(id)
+        addPendingVideoDelete(remoteVideoId)
+    }
+
+    /**
      * Deletes the projects that have no owner, which are the rows that existed before migration 3 added `user_id`,
      * and returns them so the caller can remove their proxy files.
      *

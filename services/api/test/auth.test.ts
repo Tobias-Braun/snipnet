@@ -258,6 +258,30 @@ describe('auth routes', () => {
       expect(limited.statusCode).toBe(429);
       expect(limited.json()).toMatchObject({ error: { code: 'rate_limited' } });
     });
+
+    it('caps well-formed registrations per client address without blocking other clients', async () => {
+      const max = 2;
+      // Trusting the loopback peer lets X-Forwarded-For stand in for distinct client addresses.
+      app = await buildApp({
+        config: { ...schema.config, trustProxy: '127.0.0.1', registerRateLimit: { max, windowMs: 60_000 } },
+      });
+      const registerFrom = (client: string) =>
+        app.inject({
+          method: 'POST',
+          url: '/v1/auth/register',
+          headers: { 'x-forwarded-for': client },
+          payload: { email: uniqueEmail(), password: 'correct horse' },
+        });
+
+      const statuses: number[] = [];
+      for (let i = 0; i <= max; i += 1) {
+        statuses.push((await registerFrom('198.51.100.1')).statusCode);
+      }
+      const otherClient = await registerFrom('198.51.100.2');
+
+      expect(statuses).toEqual([...Array<number>(max).fill(201), 429]);
+      expect(otherClient.statusCode).toBe(201);
+    });
   });
 
   describe('GET /v1/me', () => {

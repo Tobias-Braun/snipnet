@@ -108,20 +108,29 @@ describe('loadConfig', () => {
     });
   });
 
-  it('parses the web origins, proxy trust and waitlist limit', () => {
+  it('parses the web origins, proxy trust, waitlist and registration limits', () => {
     const config = loadConfig({
       ...required,
       WEB_ORIGIN: 'https://snipnet.app/, http://localhost:8080',
       TRUST_PROXY: '10.0.0.0/8, loopback',
       WAITLIST_RATE_LIMIT_MAX: '3',
       WAITLIST_RATE_LIMIT_WINDOW_SECONDS: '30',
+      REGISTER_RATE_LIMIT_MAX: '2',
+      REGISTER_RATE_LIMIT_WINDOW_SECONDS: '600',
     });
 
     expect(config).toMatchObject({
       webOrigins: ['https://snipnet.app', 'http://localhost:8080'],
       trustProxy: '10.0.0.0/8, loopback',
       waitlistRateLimit: { max: 3, windowMs: 30_000 },
+      registerRateLimit: { max: 2, windowMs: 600_000 },
     });
+  });
+
+  it.each(['0', 'abc', '-2'])('rejects REGISTER_RATE_LIMIT_MAX=%s', (value) => {
+    expect(() => loadConfig({ ...required, REGISTER_RATE_LIMIT_MAX: value })).toThrow(
+      /REGISTER_RATE_LIMIT_MAX/,
+    );
   });
 
   it.each(['true', '1'])('refuses TRUST_PROXY=%s, which would not pin down the trusted proxy', (value) => {

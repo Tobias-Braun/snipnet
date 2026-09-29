@@ -226,6 +226,7 @@ class ImportPipelineTest {
 
     private fun jobResponse(name: String) =
         when (name) {
+            "queued" -> jobJson("queued", 0.0)
             "running" -> jobJson("running", 0.5)
             "succeeded" -> jobJson("succeeded", 1.0)
             else -> jobJson("failed", 0.5, error = "model crashed")
@@ -353,13 +354,35 @@ class ImportPipelineTest {
             store.setCourt("p1", court())
             jobs += List(200) { "running" }
             pipeline.startAnalysis("p1")
-            val row = awaitRow { it.status == ProjectStatus.ANALYZING }
+            // The job is queued right after it is created, so only the first poll makes the row unremovable.
+            val row = awaitRow { it.status == ProjectStatus.ANALYZING && !it.removable }
             assertEquals(false, row.removable)
 
             assertEquals(false, pipeline.remove("p1"))
 
             assertEquals(1, store.list().size)
             assertTrue("DELETE /v1/videos/v1" !in requests)
+        }
+
+    @Test
+    fun aProjectWhoseAnalysisIsOnlyQueuedCanBeRemoved() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            store.setCourt("p1", court())
+            // The first poll still answers "queued", so the job never reaches the running state.
+            jobs += List(200) { "queued" }
+            pipeline.startAnalysis("p1")
+            val row = awaitRow { it.status == ProjectStatus.ANALYZING }
+            assertEquals(true, row.removable)
+
+            assertTrue(pipeline.remove("p1"))
+
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            assertTrue(store.list().isEmpty())
+            awaitPendingDeletesEmpty(pipeline)
         }
 
     @Test

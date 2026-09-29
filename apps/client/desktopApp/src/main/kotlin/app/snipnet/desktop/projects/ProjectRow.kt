@@ -16,11 +16,14 @@ enum class Stage { PROXY, UPLOADING, ANALYZING }
  * on the server again, and an interrupted step simply shows up as failed.
  *
  * @property progress fraction in 0..1, or null while it is unknown.
+ * @property jobStatus the last seen status of the analysis job, or null while it is unknown (no job yet, or the step
+ * is not the analysis).
  */
 data class TaskState(
     val stage: Stage,
     val progress: Double? = null,
     val error: String? = null,
+    val jobStatus: JobStatus? = null,
 )
 
 /** What the projects list shows as the badge of a project. */
@@ -46,6 +49,7 @@ data class ProjectRow(
     val progress: Double?,
     val error: String?,
     val hasCourt: Boolean,
+    val jobRunning: Boolean = false,
 ) {
     val title: String get() = Path.of(project.originalPath).fileName?.toString() ?: project.originalPath
 
@@ -53,10 +57,11 @@ data class ProjectRow(
     val cancellable: Boolean get() = status == ProjectStatus.PROXY || status == ProjectStatus.UPLOADING
 
     /**
-     * False while an analysis runs: the server refuses to delete a video with a queued or running job, so removing the
-     * project then would strand the server video (see [ImportPipeline.remove]).
+     * False while the analysis job is running: the server refuses to delete a video with a running job (409), so
+     * removing the project then would strand the server video (see [ImportPipeline.remove]). A job that is only queued
+     * does not block: the server drops it together with the video.
      */
-    val removable: Boolean get() = status != ProjectStatus.ANALYZING
+    val removable: Boolean get() = !jobRunning
 
     companion object {
         /**
@@ -80,13 +85,14 @@ data class ProjectRow(
                     video != null -> fromVideo(video)
                     else -> fromLocalFiles(project, serverChecked)
                 }
-            return ProjectRow(project, badge.status, badge.progress, badge.error, hasCourt)
+            return ProjectRow(project, badge.status, badge.progress, badge.error, hasCourt, badge.jobRunning)
         }
 
         private class Badge(
             val status: ProjectStatus,
             val progress: Double? = null,
             val error: String? = null,
+            val jobRunning: Boolean = false,
         )
 
         private fun fromTask(task: TaskState): Badge {
@@ -97,13 +103,18 @@ data class ProjectRow(
                     Stage.UPLOADING -> ProjectStatus.UPLOADING
                     Stage.ANALYZING -> ProjectStatus.ANALYZING
                 }
-            return Badge(status, task.progress)
+            return Badge(status, task.progress, jobRunning = task.jobStatus == JobStatus.RUNNING)
         }
 
         private fun fromVideo(video: Video): Badge =
             when (video.status) {
                 VideoStatus.ANALYZED -> Badge(ProjectStatus.ANALYZED)
-                VideoStatus.ANALYZING -> Badge(ProjectStatus.ANALYZING, video.latestJob?.progress)
+                VideoStatus.ANALYZING ->
+                    Badge(
+                        ProjectStatus.ANALYZING,
+                        video.latestJob?.progress,
+                        jobRunning = video.latestJob?.status == JobStatus.RUNNING,
+                    )
                 VideoStatus.UPLOADED -> Badge(ProjectStatus.READY)
                 VideoStatus.CREATED -> Badge(ProjectStatus.FAILED, error = "The upload was interrupted.")
                 VideoStatus.FAILED ->

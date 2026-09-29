@@ -145,7 +145,8 @@ class ImportPipeline(
         for (project in store.list()) {
             val video = project.remoteVideoId?.let { videos[it] } ?: continue
             if (video.status == VideoStatus.ANALYZING) {
-                launchTask(project.id, TaskState(Stage.ANALYZING, video.latestJob?.progress)) {
+                val job = video.latestJob
+                launchTask(project.id, TaskState(Stage.ANALYZING, job?.progress, jobStatus = job?.status)) {
                     analyze(project, openWhenDone = false)
                 }
             }
@@ -198,10 +199,11 @@ class ImportPipeline(
     /**
      * Deletes the project locally, its proxy file, and (best effort) the server's video. The original is kept.
      *
-     * The server refuses to delete a video with a queued or running job (409). Once the local project is gone its
-     * remote id is gone too, so a video removed while it is analyzing would stay on the server for good. Such a
-     * project is therefore not removed: this returns false and the project stays until the analysis ended. A 409
-     * that still arrives, because the local view of the job was stale, is retried in the background.
+     * The server refuses to delete a video with a running job (409), while a job that is only queued is dropped along
+     * with the video. Once the local project is gone its remote id is gone too, so a video removed while its job runs
+     * would stay on the server for good. Such a project is therefore not removed: this returns false and the project
+     * stays until the job left the running state. A 409 that still arrives, because the local view of the job was
+     * stale or a worker claimed the queued job at that moment, is retried in the background.
      *
      * @return whether the project was removed.
      */
@@ -276,15 +278,16 @@ class ImportPipeline(
     }
 
     /**
-     * Retries the persisted deletes, except for videos whose latest job is still queued or running in [list]: the
-     * server would answer 409 again, so those wait for a later refresh.
+     * Retries the persisted deletes, except for videos whose latest job is still running in [list]: the server would
+     * answer 409 again, so those wait for a later refresh. A queued job does not hold the delete back, the server
+     * drops it with the video.
      */
     private fun retryPendingDeletes(list: List<Video>) {
         val byId = list.associateBy { it.id }
         val userId = currentUserId() ?: return
         for (remoteId in store.pendingVideoDeletes()) {
             val job = byId[remoteId]?.latestJob
-            if (job != null && ProjectRow.isActive(job.status)) continue
+            if (job != null && job.status == JobStatus.RUNNING) continue
             launchRemoteDelete(remoteId, userId)
         }
     }
@@ -384,6 +387,7 @@ class ImportPipeline(
         projectId: String,
         stage: Stage,
         progress: Double?,
+        jobStatus: JobStatus? = null,
     ) {
         val changed =
             synchronized(lock) {
@@ -392,11 +396,12 @@ class ImportPipeline(
                 val significant =
                     previous == null ||
                         previous.stage != stage ||
+                        previous.jobStatus != jobStatus ||
                         previous.progress == null ||
                         progress == null ||
                         abs(progress - previous.progress) >= MIN_PROGRESS_STEP ||
                         progress >= 1.0
-                if (significant) tasks[projectId] = TaskState(stage, progress)
+                if (significant) tasks[projectId] = TaskState(stage, progress, jobStatus = jobStatus)
                 significant
             }
         if (changed) publish()
@@ -628,7 +633,7 @@ class ImportPipeline(
         var interval = pollIntervalMs
         var failures = 0
         while (ProjectRow.isActive(job.status)) {
-            setProgress(projectId, Stage.ANALYZING, job.progress)
+            setProgress(projectId, Stage.ANALYZING, job.progress, job.status)
             delay(interval)
             val next =
                 try {

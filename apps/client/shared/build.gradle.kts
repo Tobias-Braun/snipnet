@@ -33,6 +33,13 @@ kotlin {
     }
 }
 
+// SQLDelight generates Kotlin into the build directory in its own style; only hand-written sources are linted.
+ktlint {
+    filter {
+        exclude { it.file.path.contains("/build/generated/") }
+    }
+}
+
 sqldelight {
     databases {
         create("SnipnetDatabase") {

@@ -8,6 +8,12 @@ import fp from 'fastify-plugin';
 export const openapiPlugin = fp<{ version: string }>(
   async (app, options) => {
     await app.register(swagger, {
+      // Names the shared schemas after their `$id` (`#/components/schemas/ErrorResponse`) instead of the
+      // generated `def-N`, so the document stays readable and its references stable when routes are added.
+      refResolver: {
+        buildLocalReference: (json, _baseUri, _fragment, index) =>
+          typeof json.$id === 'string' ? json.$id : `def-${String(index)}`,
+      },
       openapi: {
         openapi: '3.1.0',
         info: { title: 'Snipnet API', version: options.version },

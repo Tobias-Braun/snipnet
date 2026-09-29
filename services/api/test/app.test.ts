@@ -167,5 +167,63 @@ describe('API application', () => {
       expect(document.paths).toHaveProperty(['/v1/health', 'get']);
       expect(document.paths).not.toHaveProperty('/v1/openapi.json');
     });
+
+    it('documents every error response with the shared ErrorResponse schema', async () => {
+      const response = await (await newApp()).inject({ method: 'GET', url: '/v1/openapi.json' });
+      type Operation = { responses?: Record<string, { content?: Record<string, { schema?: unknown }> }> };
+      const document = response.json<{
+        paths: Record<string, Record<string, Operation>>;
+        components: { schemas: Record<string, unknown> };
+      }>();
+
+      expect(document.components.schemas).toHaveProperty('ErrorResponse');
+
+      const errorResponses: { route: string; status: string; schema: unknown }[] = [];
+      for (const [path, operations] of Object.entries(document.paths)) {
+        for (const [method, operation] of Object.entries(operations)) {
+          for (const [status, described] of Object.entries(operation.responses ?? {})) {
+            if (Number(status) >= 400) {
+              errorResponses.push({
+                route: `${method} ${path}`,
+                status,
+                schema: described.content?.['application/json']?.schema,
+              });
+            }
+          }
+        }
+      }
+
+      expect(errorResponses.length).toBeGreaterThan(0);
+      for (const { schema } of errorResponses) {
+        expect(schema).toEqual({ $ref: '#/components/schemas/ErrorResponse' });
+      }
+      expect(errorResponses).toContainEqual(
+        expect.objectContaining({ route: 'post /v1/auth/register', status: '409' }),
+      );
+      expect(errorResponses).toContainEqual(
+        expect.objectContaining({ route: 'post /v1/waitlist', status: '400' }),
+      );
+    });
+
+    it('documents a 400 validation_error on every operation that validates a request body', async () => {
+      const response = await (await newApp()).inject({ method: 'GET', url: '/v1/openapi.json' });
+      type Operation = { requestBody?: unknown; responses?: Record<string, unknown> };
+      const document = response.json<{ paths: Record<string, Record<string, Operation>> }>();
+
+      const withBody: string[] = [];
+      const missing400: string[] = [];
+      for (const [path, operations] of Object.entries(document.paths)) {
+        // The echo route registered by this file's `newApp` is a test fixture, not part of the API.
+        if (path.startsWith('/v1/test/')) continue;
+        for (const [method, operation] of Object.entries(operations)) {
+          if (operation.requestBody === undefined) continue;
+          withBody.push(`${method} ${path}`);
+          if (operation.responses?.['400'] === undefined) missing400.push(`${method} ${path}`);
+        }
+      }
+
+      expect(withBody).toContain('post /v1/auth/login');
+      expect(missing400).toEqual([]);
+    });
   });
 });

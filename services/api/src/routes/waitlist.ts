@@ -28,7 +28,7 @@ export const waitlistRoutes: FastifyPluginCallback<WaitlistRouteOptions> = (app,
           },
           { additionalProperties: false },
         ),
-        response: { 202: Type.Object({}), 429: { $ref: 'ErrorResponse#' } },
+        response: { 202: Type.Object({}), 400: Type.Ref('ErrorResponse'), 429: Type.Ref('ErrorResponse') },
       },
     },
     async (request, reply) => {

@@ -18,8 +18,10 @@ declare module '@fastify/jwt' {
 declare module 'fastify' {
   interface FastifyInstance {
     /**
-     * `preHandler` for every route that needs a signed-in user. It verifies the bearer token and exposes the
-     * user id as `request.user.sub`; a missing, malformed, tampered or expired token becomes `unauthorized`.
+     * `onRequest` hook for every route that needs a signed-in user. It runs before body parsing and schema
+     * validation, so an unauthenticated request always gets 401 (never a 400 leaking the schema) and its body is
+     * never parsed. It verifies the bearer token and exposes the user id as `request.user.sub`; a missing,
+     * malformed, tampered or expired token becomes `unauthorized`.
      */
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }

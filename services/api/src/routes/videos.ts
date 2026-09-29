@@ -96,7 +96,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.post(
     '/videos',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,
@@ -143,7 +143,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.get(
     '/videos',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,
@@ -184,7 +184,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.get(
     '/videos/:id',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,
@@ -198,7 +198,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.delete(
     '/videos/:id',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,
@@ -245,7 +245,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.post(
     '/videos/:id/upload-complete',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,
@@ -288,7 +288,7 @@ export const videoRoutes: FastifyPluginCallbackTypebox = (app, _options, done) =
   app.put(
     '/videos/:id/court',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['videos'],
         security,

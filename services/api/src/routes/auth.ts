@@ -160,7 +160,7 @@ export const authRoutes: FastifyPluginCallbackTypebox<AuthRouteOptions> = (app, 
   app.get(
     '/me',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['auth'],
         security: [{ bearerAuth: [] }],
@@ -182,7 +182,7 @@ export const authRoutes: FastifyPluginCallbackTypebox<AuthRouteOptions> = (app, 
   app.patch(
     '/me',
     {
-      preHandler: app.authenticate,
+      onRequest: app.authenticate,
       schema: {
         tags: ['auth'],
         security: [{ bearerAuth: [] }],

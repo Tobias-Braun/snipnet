@@ -95,6 +95,16 @@ describe('segment set routes', () => {
     expect(post.statusCode).toBe(401);
   });
 
+  it('answers 401 before validating the body of an unauthenticated request', async () => {
+    const invalid = await app.inject({
+      method: 'POST',
+      url: `/v1/videos/${UNKNOWN_ID}/segment-sets`,
+      payload: { segments: 'not-an-array' },
+    });
+    expect(invalid.statusCode).toBe(401);
+    expect(invalid.json<{ error: { code: string } }>().error.code).toBe('unauthorized');
+  });
+
   describe('reading', () => {
     it('lists the sets of a video oldest first and returns a single one', async () => {
       const user = await newUser();

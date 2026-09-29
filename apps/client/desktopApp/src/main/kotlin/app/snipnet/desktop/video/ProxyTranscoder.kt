@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,14 +82,18 @@ class FfmpegProxyTranscoder(
         try {
             val errors =
                 async {
-                    process.errorStream
-                        .bufferedReader()
-                        .readText()
-                        .trim()
-                        .takeLast(ERROR_TAIL_CHARS)
+                    cancellationAware {
+                        process.errorStream
+                            .bufferedReader()
+                            .readText()
+                            .trim()
+                            .takeLast(ERROR_TAIL_CHARS)
+                    }
                 }
-            process.inputStream.bufferedReader().forEachLine { line ->
-                parseProgress(line, durationMs)?.let(onProgress)
+            cancellationAware {
+                process.inputStream.bufferedReader().forEachLine { line ->
+                    parseProgress(line, durationMs)?.let(onProgress)
+                }
             }
             val exit = process.waitFor()
             ensureActive()
@@ -99,6 +104,21 @@ class FfmpegProxyTranscoder(
             process.destroyForcibly()
         }
     }
+
+    /**
+     * Runs a blocking read of the ffmpeg pipes. When the caller is cancelled the watcher kills the process, and on
+     * Linux that can close the pipe under a read that is still blocked, so the read fails with an [IOException]
+     * instead of seeing EOF. That failure is only a side effect of the cancellation, so [ensureActive] reports it as
+     * the CancellationException. An [IOException] while the coroutine is still active is a real error and is
+     * rethrown unchanged.
+     */
+    private suspend fun <T> cancellationAware(block: () -> T): T =
+        try {
+            block()
+        } catch (e: IOException) {
+            currentCoroutineContext().ensureActive()
+            throw e
+        }
 
     companion object {
         private const val ERROR_TAIL_CHARS = 1000

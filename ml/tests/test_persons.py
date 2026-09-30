@@ -68,6 +68,39 @@ def test_tracker_does_not_link_boxes_further_apart_than_the_foot_gate() -> None:
     assert second[0].track_id != first[0].track_id
 
 
+def test_tracker_widens_the_foot_gate_for_a_track_that_missed_a_frame() -> None:
+    # The 0.3 high box reappears 0.45 (1.5 box heights) away after one frame without any detection.
+    reappeared = (0.55, 0.1, 0.65, 0.4)
+    tracker = IouTracker(foot_gate=1.0)
+    first = tracker.update([(0.1, 0.1, 0.2, 0.4)])
+    tracker.update([])
+    assert tracker.update([reappeared])[0].track_id == first[0].track_id
+    # Without a miss the same jump is outside the gate, and a capped scale of 1 keeps the gate fixed.
+    direct = IouTracker(foot_gate=1.0)
+    first = direct.update([(0.1, 0.1, 0.2, 0.4)])
+    assert direct.update([reappeared])[0].track_id != first[0].track_id
+    fixed = IouTracker(foot_gate=1.0, foot_gate_max_scale=1.0)
+    first = fixed.update([(0.1, 0.1, 0.2, 0.4)])
+    fixed.update([])
+    assert fixed.update([reappeared])[0].track_id != first[0].track_id
+
+
+def test_tracker_caps_the_foot_gate_growth() -> None:
+    # Two frames missed would allow a factor 3, but the default cap of 2 rejects a jump of 2.5 box heights.
+    tracker = IouTracker(foot_gate=1.0, max_missed=2)
+    first = tracker.update([(0.1, 0.1, 0.2, 0.4)])
+    tracker.update([])
+    tracker.update([])
+    assert tracker.update([(0.85, 0.1, 0.95, 0.4)])[0].track_id != first[0].track_id
+
+
+def test_person_config_rejects_a_foot_gate_scale_below_one() -> None:
+    # A scale below 1 would shrink the gate for tracks that missed frames, the opposite of its purpose.
+    assert PersonConfig(foot_gate_max_scale=1.0).foot_gate_max_scale == 1.0
+    with pytest.raises(ValueError, match="foot_gate_max_scale"):
+        PersonConfig(foot_gate_max_scale=0.5)
+
+
 def test_tracker_foot_gate_uses_isotropic_distance_and_can_be_disabled() -> None:
     # A normalized x shift of 0.2 is 0.67 heights of the 0.3 high box on a square frame, but on a 2:1 frame it
     # equals 0.4 frame heights, which is more than one box height.

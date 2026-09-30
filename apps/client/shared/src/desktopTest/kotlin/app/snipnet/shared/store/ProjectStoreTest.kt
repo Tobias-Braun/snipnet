@@ -61,6 +61,28 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun purgedRemoteVideosAreQueuedOnlyForTheAccountThatListsThem() {
+        val database = openInMemoryDatabase()
+        database.projectQueries.insert("a", null, "/a.mp4", null, "v1", null, null, 1L, 1L)
+        database.projectQueries.insert("b", null, "/b.mp4", null, "v2", null, null, 1L, 1L)
+        database.projectQueries.insert("c", null, "/c.mp4", null, null, null, null, 1L, 1L)
+        val store = store(database)
+        store.purgeOwnerless()
+
+        signedIn = null
+        assertEquals(emptyList(), store.claimPurgedRemoteVideos(setOf("v1")))
+
+        signedIn = "u2"
+        assertEquals(listOf("v1"), store.claimPurgedRemoteVideos(setOf("v1", "v9")))
+        assertEquals(listOf("v1"), store.pendingVideoDeletes())
+
+        signedIn = "u3"
+        assertEquals(emptyList(), store.claimPurgedRemoteVideos(setOf("v1")))
+        assertEquals(listOf("v2"), store.claimPurgedRemoteVideos(setOf("v2")))
+        assertEquals(listOf("v2"), store.pendingVideoDeletes())
+    }
+
+    @Test
     fun pendingSavesAreScopedToTheUser() {
         val store = store()
         val id = store.create("/a.mp4").id
@@ -274,6 +296,9 @@ class ProjectStoreTest {
         // Migration 3 created the pending delete table.
         migrated.addPendingVideoDelete("remote-1")
         assertEquals(listOf("remote-1"), migrated.pendingVideoDeletes())
+        // Migration 4 created the table that keeps the server videos of purged rows until an account claims them.
+        assertEquals(listOf("old"), migrated.purgeOwnerless().map { it.id })
+        assertEquals(listOf("remote-1"), migrated.claimPurgedRemoteVideos(setOf("remote-1")))
     }
 
     @Test

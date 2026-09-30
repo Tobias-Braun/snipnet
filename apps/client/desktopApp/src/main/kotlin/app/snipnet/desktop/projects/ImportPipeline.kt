@@ -141,6 +141,8 @@ class ImportPipeline(
             serverChecked = true
         }
         publish()
+        // Videos of projects purged at startup have no local owner; the listing proves this account owns them.
+        store.claimPurgedRemoteVideos(list.mapTo(mutableSetOf()) { it.id })
         retryPendingDeletes(list)
         for (project in store.list()) {
             val video = project.remoteVideoId?.let { videos[it] } ?: continue

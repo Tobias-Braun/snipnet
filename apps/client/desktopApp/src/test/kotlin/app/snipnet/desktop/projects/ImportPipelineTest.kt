@@ -233,9 +233,10 @@ class ImportPipelineTest {
 
     private val api = SnipnetApi(engine, "http://api.test")
     private var counter = 0
+    private val database = openInMemoryDatabase()
     private val store =
         ProjectStore(
-            openInMemoryDatabase(),
+            database,
             newId = { "p${++counter}" },
             now = { 1_000L },
             currentUserId = { signedIn },
@@ -405,6 +406,37 @@ class ImportPipelineTest {
 
             deleteConflicts.set(0)
             awaitPendingDeletesEmpty(pipeline)
+        }
+
+    @Test
+    fun aRefreshDeletesTheServerVideoOfAPurgedOwnerlessProjectOnceTheAccountListsIt() =
+        runBlocking<Unit> {
+            database.projectQueries.insert("old", null, "/old.mp4", null, "v1", null, null, 1L, 1L)
+            store.purgeOwnerless()
+            videoListDown = true
+            assertFailsWith<ApiError> { pipeline.refresh() }
+            assertTrue("DELETE /v1/videos/v1" !in requests)
+            videoListDown = false
+
+            pipeline.refresh()
+
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            awaitPendingDeletesEmpty(pipeline)
+            assertEquals(emptyList(), store.claimPurgedRemoteVideos(setOf("v1")))
+        }
+
+    @Test
+    fun aRefreshKeepsAPurgedVideoTheAccountDoesNotList() =
+        runBlocking<Unit> {
+            database.projectQueries.insert("old", null, "/old.mp4", null, "other", null, null, 1L, 1L)
+            store.purgeOwnerless()
+
+            pipeline.refresh()
+
+            assertEquals(emptyList(), store.pendingVideoDeletes())
+            assertEquals(listOf("other"), store.claimPurgedRemoteVideos(setOf("other")))
         }
 
     @Test

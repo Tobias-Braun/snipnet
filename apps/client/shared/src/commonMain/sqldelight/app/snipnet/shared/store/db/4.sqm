@@ -1,0 +1,6 @@
+-- Version 5: server videos of projects that purgeOwnerless deleted. Their rows had no owner, so the delete cannot be
+-- queued for an account. The ids are kept until a signed-in account's video list contains them, which shows that
+-- account owns the video; only then are they turned into pending deletes for it.
+CREATE TABLE purged_remote_video (
+    remote_video_id TEXT NOT NULL PRIMARY KEY
+);

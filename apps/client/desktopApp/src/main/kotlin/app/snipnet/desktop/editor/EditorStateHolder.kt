@@ -1,9 +1,11 @@
 package app.snipnet.desktop.editor
 
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import app.snipnet.desktop.export.ExportMode
 import app.snipnet.desktop.export.ExportOptions
 import app.snipnet.desktop.export.ExportRequest
 import app.snipnet.desktop.export.FfmpegRallyExporter
+import app.snipnet.desktop.export.ProjectFiles
 import app.snipnet.desktop.export.RallyExporter
 import app.snipnet.desktop.export.exportRanges
 import app.snipnet.desktop.state.StateHolder
@@ -568,12 +570,45 @@ class EditorStateHolder(
                         progress = 0.0,
                     ),
             )
-        }
+        }.also { checkEdlSupport() }
 
-    /** Changes the dialog choices; ignored while an export runs. */
+    /**
+     * Probes the original in the background to learn whether EDL can represent its frame rate. Until the probe
+     * answers EDL stays selectable; when it turns out unsupported the option is disabled and a selected EDL falls
+     * back to FCPXML, so the failure never has to be discovered by starting an export.
+     */
+    private fun checkEdlSupport() {
+        val original = originalPath ?: return
+        scope.launch {
+            // A failed probe leaves EDL selectable; ProjectFiles.edl still refuses unsupported rates at export time.
+            val fps =
+                try {
+                    ProjectFiles.edlUnsupportedFps(engine.probe(original))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            update { s ->
+                val options = s.export.options
+                val fallback = fps != null && options.mode == ExportMode.Edl && !s.export.running
+                s.copy(
+                    export =
+                        s.export.copy(
+                            edlUnsupportedFps = fps,
+                            options = if (fallback) options.copy(mode = ExportMode.Fcpxml) else options,
+                        ),
+                )
+            }
+        }
+    }
+
+    /** Changes the dialog choices; ignored while an export runs, and EDL stays unselectable once known unsupported. */
     fun setExportOptions(transform: (ExportOptions) -> ExportOptions) =
         update { s ->
-            if (s.export.running) s else s.copy(export = s.export.copy(options = transform(s.export.options)))
+            val changed = transform(s.export.options)
+            val blocked = changed.mode == ExportMode.Edl && s.export.edlUnsupportedFps != null
+            if (s.export.running || blocked) s else s.copy(export = s.export.copy(options = changed))
         }
 
     /**

@@ -103,9 +103,9 @@ object ProjectFiles {
         ranges: List<TimeRange>,
     ): String {
         val rate = FrameRate.fromFps(info.frameRate)
-        if (rate.nominal > EDL_MAX_NOMINAL_FPS) {
+        edlUnsupportedFps(info)?.let { fps ->
             throw ExportException(
-                "The EDL format cannot represent ${rate.nominal} fps footage (frame numbers are limited to two " +
+                "The EDL format cannot represent $fps fps footage (frame numbers are limited to two " +
                     "digits). Export as FCPXML or as video instead.",
             )
         }
@@ -141,6 +141,13 @@ object ProjectFiles {
         }
         return out.toString()
     }
+
+    /**
+     * The nominal frame rate of [info] when [edl] cannot write it (above two-digit frame numbers), otherwise null.
+     * The export dialog asks this up front so it can steer the user away from EDL instead of failing at export time.
+     */
+    fun edlUnsupportedFps(info: VideoInfo): Int? =
+        FrameRate.fromFps(info.frameRate).nominal.takeIf { it > EDL_MAX_NOMINAL_FPS }
 
     /** Frame index of the file's first frame on its embedded timecode; absent or unparsable timecodes count as 0. */
     private fun sourceStartFrames(

@@ -4,6 +4,7 @@ import app.snipnet.desktop.export.ExportException
 import app.snipnet.desktop.export.ExportMode
 import app.snipnet.desktop.export.ExportRequest
 import app.snipnet.desktop.export.RallyExporter
+import app.snipnet.desktop.video.VideoInfo
 import app.snipnet.shared.editing.TimeRange
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -33,13 +34,16 @@ class EditorExportTest {
         }
     }
 
-    private fun holder(exporter: RallyExporter): EditorStateHolder {
+    private fun holder(
+        exporter: RallyExporter,
+        fps: Double = 25.0,
+    ): EditorStateHolder {
         val store = newStore()
         store.create("/videos/match.mp4", remoteVideoId = "remote-1")
         return EditorStateHolder(
             "p1",
             store,
-            FakeEngine(),
+            FakeEngine(FakePlayer(VideoInfo(TEST_DURATION_MS, 1920, 1080, fps, "h264", "aac", 44100, 2))),
             newQueue(store),
             loadSets = { listOf(prediction(threeRallies)) },
             dispatcher = UnconfinedTestDispatcher(),
@@ -135,5 +139,40 @@ class EditorExportTest {
         holder.setExportOptions { it.copy(mode = ExportMode.PerRally) }
         assertEquals(ExportMode.SingleVideo, holder.state.value.export.options.mode)
         holder.closeExport()
+    }
+
+    @Test
+    fun highFrameRateFootageBlocksEdlUpFront() {
+        val holder = holder(ScriptedExporter { _, _ -> emptyList() }, fps = 120.0)
+        holder.openExport()
+        assertEquals(120, holder.state.value.export.edlUnsupportedFps)
+    }
+
+    @Test
+    fun aSelectedEdlFallsBackToFcpxmlForHighFrameRateFootage() {
+        val holder = holder(ScriptedExporter { _, _ -> emptyList() }, fps = 120.0)
+        holder.setExportOptions { it.copy(mode = ExportMode.Edl) }
+        holder.openExport()
+        assertEquals(ExportMode.Fcpxml, holder.state.value.export.options.mode)
+    }
+
+    @Test
+    fun edlCannotBeChosenAgainOnceKnownUnsupported() {
+        val holder = holder(ScriptedExporter { _, _ -> emptyList() }, fps = 120.0)
+        holder.openExport()
+        holder.setExportOptions { it.copy(mode = ExportMode.Fcpxml) }
+        holder.setExportOptions { it.copy(mode = ExportMode.Edl) }
+        assertEquals(ExportMode.Fcpxml, holder.state.value.export.options.mode)
+        holder.setExportOptions { it.copy(mode = ExportMode.SingleVideo) }
+        assertEquals(ExportMode.SingleVideo, holder.state.value.export.options.mode)
+    }
+
+    @Test
+    fun ordinaryFrameRatesKeepEdlAvailable() {
+        val holder = holder(ScriptedExporter { _, _ -> emptyList() })
+        holder.setExportOptions { it.copy(mode = ExportMode.Edl) }
+        holder.openExport()
+        assertNull(holder.state.value.export.edlUnsupportedFps)
+        assertEquals(ExportMode.Edl, holder.state.value.export.options.mode)
     }
 }

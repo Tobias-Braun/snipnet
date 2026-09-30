@@ -9,6 +9,8 @@ import app.snipnet.shared.store.ProjectStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -65,6 +67,9 @@ class SaveQueue(
     private val attached = ConcurrentHashMap.newKeySet<String>()
     private val rejected = HashSet<String>()
 
+    /** The project the flush that currently holds [mutex] works on, or null while no flush runs. */
+    private val flushing = MutableStateFlow<String?>(null)
+
     /**
      * Projects whose last upload got a 2xx answer that could not be read, mapped to the parent set that upload used.
      * The server most likely stored the set, so posting again would create a duplicate; the next flush first checks
@@ -86,19 +91,35 @@ class SaveQueue(
         background: Boolean = false,
     ): FlushResult =
         mutex.withLock {
-            if (background && projectId in attached) return@withLock FlushResult.Idle
+            // Published before the attached check and reset on every exit, so settle sees exactly the project the
+            // flush holding the mutex works on.
+            flushing.value = projectId
+            try {
+                flushLocked(projectId, onSaved, background)
+            } finally {
+                flushing.value = null
+            }
+        }
+
+    private suspend fun flushLocked(
+        projectId: String,
+        onSaved: (FlushResult.Saved) -> Unit,
+        background: Boolean,
+    ): FlushResult =
+        run {
+            if (background && projectId in attached) return@run FlushResult.Idle
             rejected.remove(projectId)
-            if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
-            val project = store.get(projectId) ?: return@withLock FlushResult.Idle
-            val save = project.pendingSave ?: return@withLock FlushResult.Idle
+            if (!store.isOwnedByCurrentUser(projectId)) return@run FlushResult.Idle
+            val project = store.get(projectId) ?: return@run FlushResult.Idle
+            val save = project.pendingSave ?: return@run FlushResult.Idle
             val remoteId =
                 project.remoteVideoId
-                    ?: return@withLock FlushResult.Offline("The video is not uploaded yet.")
+                    ?: return@run FlushResult.Offline("The video is not uploaded yet.")
             try {
                 val sent =
                     if (projectId in unconfirmed) {
                         val found = findStoredCopy(remoteId, save, unconfirmed.getValue(projectId))
-                        if (!store.isOwnedByCurrentUser(projectId)) return@withLock FlushResult.Idle
+                        if (!store.isOwnedByCurrentUser(projectId)) return@run FlushResult.Idle
                         found ?: uploadNew(projectId, remoteId, save)
                     } else {
                         uploadNew(projectId, remoteId, save)
@@ -178,13 +199,18 @@ class SaveQueue(
     }
 
     /**
-     * Waits for a flush that is running right now. An editor calls it after [attach] and before it reads its project
-     * from the store: a background flush that started before the attach may still update the store (new base set,
-     * drained edit log, cleared queue), and an editor that read the project earlier would keep the stale parent and
-     * post edit log entries that were already saved.
+     * Waits for a flush of [projectId] that is running right now. An editor calls it after [attach] and before it
+     * reads its project from the store: a background flush that started before the attach may still update the store
+     * (new base set, drained edit log, cleared queue), and an editor that read the project earlier would keep the
+     * stale parent and post edit log entries that were already saved.
+     *
+     * A flush of another project is not waited for: it cannot touch this project's store entry, and against a
+     * hanging server it can take two full request timeouts. A background flush of this project that is still queued
+     * on the mutex is harmless too, because it publishes its project before it checks [attached] and so either sees
+     * the attach and gives up, or is seen here and waited for.
      */
-    suspend fun settle() {
-        mutex.withLock { }
+    suspend fun settle(projectId: String) {
+        flushing.first { it != projectId }
     }
 
     fun detach(projectId: String) {

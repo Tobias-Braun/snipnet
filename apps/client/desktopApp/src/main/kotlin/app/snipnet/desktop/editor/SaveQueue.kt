@@ -71,11 +71,21 @@ class SaveQueue(
     private val flushing = MutableStateFlow<String?>(null)
 
     /**
-     * Projects whose last upload got a 2xx answer that could not be read, mapped to the parent set that upload used.
-     * The server most likely stored the set, so posting again would create a duplicate; the next flush first checks
-     * the server's sets and only uploads when the save is not among them.
+     * Projects whose last upload got a 2xx answer that could not be read, mapped to the save that was sent. The
+     * server most likely stored the set, so posting again would create a duplicate; the next flush first checks the
+     * server's sets and only uploads when the save is not among them. The marker lives in memory only, so an app
+     * restart forgets it and the queued save is posted again.
      */
-    private val unconfirmed = HashMap<String, String?>()
+    private val unconfirmed = HashMap<String, SentSave>()
+
+    /**
+     * A save whose upload could not be confirmed. [queued] is the save as it sat in the queue, [sent] the one that
+     * went out, which differs only in the parent set that was looked up for a save queued without one.
+     */
+    private data class SentSave(
+        val queued: PendingSave,
+        val sent: PendingSave,
+    )
 
     /**
      * Uploads the queued save of [projectId]. On success the store is updated first (new base set, drained edit
@@ -116,16 +126,12 @@ class SaveQueue(
                 project.remoteVideoId
                     ?: return@run FlushResult.Offline("The video is not uploaded yet.")
             try {
-                val sent =
-                    if (projectId in unconfirmed) {
-                        val found = findStoredCopy(remoteId, save, unconfirmed.getValue(projectId))
-                        if (!store.isOwnedByCurrentUser(projectId)) return@run FlushResult.Idle
-                        found ?: uploadNew(projectId, remoteId, save)
-                    } else {
-                        uploadNew(projectId, remoteId, save)
-                    }
+                val confirmed = unconfirmed[projectId]?.let { confirmSent(projectId, remoteId, save, it, onSaved) }
+                if (confirmed != null && confirmed.rebased == null) return@run confirmed.saved
+                val toSend = confirmed?.rebased ?: save
+                val sent = uploadNew(projectId, remoteId, toSend)
                 unconfirmed -= projectId
-                val saved = FlushResult.Saved(sent, store.markSaved(projectId, sent.id, save))
+                val saved = FlushResult.Saved(sent, store.markSaved(projectId, sent.id, toSend))
                 onSaved(saved)
                 saved
             } catch (e: NotOwnedException) {
@@ -145,6 +151,61 @@ class SaveQueue(
                 FlushResult.Rejected("Could not update the local project: ${e.message}")
             }
         }
+
+    /**
+     * The outcome of [confirmSent]: [saved] is the set that was found on the server; [rebased] is the newer queued
+     * save that still has to be uploaded on top of it, or null when the found set was the queued save itself.
+     */
+    private class Confirmed(
+        val saved: FlushResult.Saved,
+        val rebased: PendingSave?,
+    )
+
+    /**
+     * Looks for the [unsure] save on the server and, when it is there, records it as saved. If the user saved again
+     * since ([queued] differs from what was sent), posting the newer save with its old parent would leave a partial
+     * set next to the complete one, so it is rebased onto the stored set and queued in place of the old one. Returns
+     * null when the server does not have the save. Throws [NotOwnedException] when the account changed meanwhile.
+     */
+    private suspend fun confirmSent(
+        projectId: String,
+        remoteId: String,
+        queued: PendingSave,
+        unsure: SentSave,
+        onSaved: (FlushResult.Saved) -> Unit,
+    ): Confirmed? {
+        val found = findStoredCopy(remoteId, unsure.sent, unsure.sent.parentSetId)
+        if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()
+        if (found == null) return null
+        val saved = FlushResult.Saved(found, store.markSaved(projectId, found.id, unsure.queued))
+        onSaved(saved)
+        val rebased =
+            if (queued == unsure.queued) {
+                null
+            } else {
+                rebase(queued, unsure.queued, found.id).also { store.setPendingSave(projectId, it) }
+            }
+        // Cleared only once the store continues from the found set: after a local failure in between, the next flush
+        // must confirm again, since posting the queued save as it is would duplicate the set or orphan the newer one.
+        unconfirmed -= projectId
+        return Confirmed(saved, rebased)
+    }
+
+    /**
+     * [newer] expressed relative to the stored set [storedSetId] instead of the parent it was queued with: that set
+     * is the parent, and the edit log loses the operations of [sent], which the stored set already contains. A log
+     * that does not begin with those operations cannot be expressed relative to the new base and starts over empty,
+     * as in [ProjectStore.markSaved].
+     */
+    private fun rebase(
+        newer: PendingSave,
+        sent: PendingSave,
+        storedSetId: String,
+    ): PendingSave {
+        val log = newer.editLog
+        val remaining = if (log.take(sent.editLog.size) == sent.editLog) log.drop(sent.editLog.size) else emptyList()
+        return newer.copy(parentSetId = storedSetId, editLog = remaining)
+    }
 
     /** Thrown when the account changed while a lookup was suspended; the save stays queued untouched. */
     private class NotOwnedException : Exception()
@@ -167,7 +228,7 @@ class SaveQueue(
             return upload(remoteId, save.copy(parentSetId = parentSetId))
         } catch (e: ApiError.MalformedResponse) {
             if (e.status !in 200..299) throw e
-            unconfirmed[projectId] = parentSetId
+            unconfirmed[projectId] = SentSave(save, save.copy(parentSetId = parentSetId))
             // The upload suspended, so the account may have changed; the lookup would carry the new account's token.
             // The project stays unconfirmed, so its owner's next flush does the check instead.
             if (!store.isOwnedByCurrentUser(projectId)) throw NotOwnedException()

@@ -281,3 +281,59 @@ def test_transient_config_is_validated_and_part_of_the_cache_key() -> None:
     assert features.cache_key("a" * 64, roi, FeatureConfig()) != features.cache_key(
         "a" * 64, roi, FeatureConfig(transient_delta=0.2)
     )
+
+
+@pytest.fixture(scope="module")
+def short_clip(tmp_path_factory):
+    video = tmp_path_factory.mktemp("progress") / "short.mp4"
+    labels = fixtures.generate_video(video, duration_s=6, seed=4)
+    return video, labels.court.roi
+
+
+@needs_ffmpeg
+def test_progress_is_reported_within_bounds_and_never_decreases(short_clip) -> None:
+    video, roi = short_clip
+    reported: list[float] = []
+    extract_features(video, roi, on_progress=reported.append)
+    assert len(reported) > 5
+    assert all(0 < value <= 1 for value in reported)
+    assert reported == sorted(reported)
+    # The last sampled frame lies one sampling step before the end, so a correct fraction ends just short of 1.
+    assert reported[-1] > 0.9
+
+
+@needs_ffmpeg
+def test_progress_stays_capped_when_the_container_duration_is_too_short(short_clip, monkeypatch) -> None:
+    video, roi = short_clip
+    # A declared duration well below the last frame timestamp must clamp at 1 instead of overshooting.
+    monkeypatch.setattr(features, "probe_duration", lambda path: 2.0)
+    reported: list[float] = []
+    extract_features(video, roi, on_progress=reported.append)
+    assert reported
+    assert all(0 < value <= 1 for value in reported)
+    assert reported == sorted(reported)
+    assert reported[-1] == 1.0
+
+
+@needs_ffmpeg
+def test_progress_is_not_reported_without_a_declared_duration(short_clip, monkeypatch) -> None:
+    video, roi = short_clip
+    # Stands in for a raw stream or pipe-written file: whether ffmpeg estimates a duration for those varies by
+    # format and version, while probe_duration returning 0 is exactly the condition compute_features branches on.
+    monkeypatch.setattr(features, "probe_duration", lambda path: 0.0)
+    reported: list[float] = []
+    table = extract_features(video, roi, on_progress=reported.append)
+    assert reported == []
+    assert len(table) > 0
+
+
+@needs_ffmpeg
+def test_progress_is_not_reported_on_a_cache_hit(short_clip, tmp_path) -> None:
+    video, roi = short_clip
+    first: list[float] = []
+    extract_features(video, roi, cache_dir=tmp_path, on_progress=first.append)
+    assert first
+
+    second: list[float] = []
+    extract_features(video, roi, cache_dir=tmp_path, on_progress=second.append)
+    assert second == []

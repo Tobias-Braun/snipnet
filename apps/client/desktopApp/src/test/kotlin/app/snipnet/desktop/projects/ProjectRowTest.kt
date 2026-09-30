@@ -1,5 +1,7 @@
 package app.snipnet.desktop.projects
 
+import app.snipnet.shared.model.Job
+import app.snipnet.shared.model.JobStatus
 import app.snipnet.shared.model.Video
 import app.snipnet.shared.model.VideoStatus
 import app.snipnet.shared.store.Project
@@ -50,6 +52,21 @@ class ProjectRowTest {
         assertEquals(ProjectStatus.ANALYZED, status(video = video(VideoStatus.ANALYZED)).status)
         assertEquals(ProjectStatus.FAILED, status(video = video(VideoStatus.FAILED)).status)
         assertEquals(ProjectStatus.FAILED, status(video = video(VideoStatus.CREATED)).status)
+    }
+
+    private fun analyzingVideo(jobStatus: JobStatus) =
+        video(VideoStatus.ANALYZING).copy(
+            latestJob = Job("j1", "v1", jobStatus, 0.0, null, null, 1, "", null, null),
+        )
+
+    @Test
+    fun onlyARunningJobMakesTheRowUnremovable() {
+        assertEquals(false, status(video = analyzingVideo(JobStatus.RUNNING)).removable)
+        assertEquals(true, status(video = analyzingVideo(JobStatus.QUEUED)).removable)
+        assertEquals(true, status(video = video(VideoStatus.UPLOADED)).removable)
+        assertEquals(false, status(task = TaskState(Stage.ANALYZING, 0.5, jobStatus = JobStatus.RUNNING)).removable)
+        assertEquals(true, status(task = TaskState(Stage.ANALYZING, 0.0, jobStatus = JobStatus.QUEUED)).removable)
+        assertEquals(true, status(task = TaskState(Stage.ANALYZING, 0.0)).removable)
     }
 
     @Test

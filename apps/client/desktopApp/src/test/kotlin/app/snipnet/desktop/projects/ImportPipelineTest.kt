@@ -74,6 +74,9 @@ class ImportPipelineTest {
     /** Makes `DELETE /v1/videos/v1` fail at the transport level, as when the machine is offline. */
     @Volatile private var deleteOffline = false
 
+    /** The status of the latest job that the video endpoints report while the video is analyzing. */
+    @Volatile private var listedJobStatus = "running"
+
     private val info = VideoInfo(60_000, 1920, 1080, 30.0, "h264", "aac", 48_000, 2)
 
     private val transcoder =
@@ -130,7 +133,7 @@ class ImportPipelineTest {
         "proxySizeBytes":100,"status":"$status","court":$videoCourt,"createdAt":"2026-01-01T00:00:00Z",
         "updatedAt":"2026-01-01T00:00:00Z","latestJob":${if (status == "analyzing") {
             jobJson(
-                "running",
+                listedJobStatus,
                 0.5,
             )
         } else {
@@ -226,6 +229,7 @@ class ImportPipelineTest {
 
     private fun jobResponse(name: String) =
         when (name) {
+            "queued" -> jobJson("queued", 0.0)
             "running" -> jobJson("running", 0.5)
             "succeeded" -> jobJson("succeeded", 1.0)
             else -> jobJson("failed", 0.5, error = "model crashed")
@@ -354,13 +358,41 @@ class ImportPipelineTest {
             store.setCourt("p1", court())
             jobs += List(200) { "running" }
             pipeline.startAnalysis("p1")
-            val row = awaitRow { it.status == ProjectStatus.ANALYZING }
+            // The job is queued right after it is created, so only the first poll makes the row unremovable.
+            val row = awaitRow { it.status == ProjectStatus.ANALYZING && !it.removable }
             assertEquals(false, row.removable)
 
             assertEquals(false, pipeline.remove("p1"))
 
             assertEquals(1, store.list().size)
             assertTrue("DELETE /v1/videos/v1" !in requests)
+        }
+
+    @Test
+    fun aProjectWhoseAnalysisIsOnlyQueuedCanBeRemoved() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            store.setCourt("p1", court())
+            // The first poll still answers "queued", so the job never reaches the running state.
+            jobs += List(200) { "queued" }
+            pipeline.startAnalysis("p1")
+            // The created job's status is published before the first poll goes out, so from then on the row reflects
+            // the queued job and not only the analysis step that was still creating it.
+            withTimeout(10_000) {
+                while ("GET /v1/jobs/j1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            val row = pipeline.rows.value.single()
+            assertEquals(ProjectStatus.ANALYZING, row.status)
+            assertEquals(true, row.removable)
+
+            assertTrue(pipeline.remove("p1"))
+
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            assertTrue(store.list().isEmpty())
+            awaitPendingDeletesEmpty(pipeline)
         }
 
     @Test
@@ -460,6 +492,29 @@ class ImportPipelineTest {
             assertEquals(listOf("v1"), store.pendingVideoDeletes())
 
             videoStatus = "analyzed"
+            awaitPendingDeletesEmpty(pipeline)
+        }
+
+    @Test
+    fun aRefreshRetriesAPendingDeleteWhileTheVideosJobIsOnlyQueued() =
+        runBlocking<Unit> {
+            pipeline.import(listOf(original))
+            awaitRow { it.status == ProjectStatus.READY }
+            deleteOffline = true
+            assertTrue(pipeline.remove("p1"))
+            withTimeout(10_000) {
+                while ("DELETE /v1/videos/v1" !in requests) kotlinx.coroutines.delay(10)
+            }
+            deleteOffline = false
+            // A job started elsewhere is queued for the video; the server drops it together with the video.
+            videoStatus = "analyzing"
+            listedJobStatus = "queued"
+
+            pipeline.refresh()
+
+            withTimeout(10_000) {
+                while (requests.count { it == "DELETE /v1/videos/v1" } < 2) kotlinx.coroutines.delay(10)
+            }
             awaitPendingDeletesEmpty(pipeline)
         }
 

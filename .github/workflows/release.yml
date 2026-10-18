@@ -42,6 +42,7 @@ jobs:
           name: installer-${{ matrix.os }}
           path: apps/client/desktopApp/build/compose/binaries/main/${{ matrix.pattern }}
           if-no-files-found: error
+          retention-days: 1
 
   release:
     needs: installers

@@ -1,15 +1,6 @@
 name: web
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - apps/web/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .prettierrc.json
-      - .github/workflows/web.yml
   pull_request:
     paths:
       - apps/web/**
@@ -29,6 +20,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: apps/web
@@ -44,30 +36,16 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test
       - run: pnpm run build
+      # lhci serves dist on an ephemeral port and asserts the budgets in lighthouserc.json: mobile
+      # performance >= 0.9, accessibility >= 0.95 and CLS <= 0.1.
+      - run: pnpm run lighthouse
       - name: Build the nginx image
         working-directory: .
         run: docker build -f apps/web/Dockerfile .
 
-  lighthouse:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/web
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile --filter @snipnet/web...
-      - run: pnpm run build
-      # lhci serves dist on an ephemeral port and asserts the budgets in lighthouserc.json: mobile
-      # performance >= 0.9, accessibility >= 0.95 and CLS <= 0.1.
-      - run: pnpm run lighthouse
-
   visual:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # The baselines are rendered in this image; its tag must match the pinned @playwright/test version.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
     defaults:

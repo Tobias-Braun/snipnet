@@ -1,15 +1,6 @@
 name: api
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - services/api/**
-      - package.json
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .prettierrc.json
-      - .github/workflows/api.yml
   pull_request:
     paths:
       - services/api/**
@@ -29,6 +20,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Integration tests run against a real Postgres, each test file in its own throwaway schema.
     services:
       postgres:

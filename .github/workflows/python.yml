@@ -1,15 +1,6 @@
 name: python
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ml/**
-      - services/inference/**
-      - pyproject.toml
-      - uv.lock
-      - .python-version
-      - .github/workflows/python.yml
   pull_request:
     paths:
       - ml/**
@@ -29,6 +20,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       # setup-uv publishes no floating major tag, so the release is pinned exactly.

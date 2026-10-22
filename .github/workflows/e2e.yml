@@ -1,15 +1,6 @@
 name: e2e
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - services/**
-      - ml/**
-      - infra/**
-      - pyproject.toml
-      - uv.lock
-      - .github/workflows/e2e.yml
   pull_request:
     paths:
       - services/**
@@ -29,7 +20,7 @@ permissions:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0

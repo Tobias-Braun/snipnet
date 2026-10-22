@@ -23,6 +23,7 @@ jobs:
             task: packageDeb
             pattern: 'deb/*.deb'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/client
@@ -42,6 +43,8 @@ jobs:
           name: installer-${{ matrix.os }}
           path: apps/client/desktopApp/build/compose/binaries/main/${{ matrix.pattern }}
           if-no-files-found: error
+          # The installers are compressed already.
+          compression-level: 0
           retention-days: 1
 
   release:

@@ -157,6 +157,8 @@ this folder.
 GitHub Actions runs one workflow per area (`.github/workflows/api.yml`, `web.yml`, `python.yml`,
 `client.yml`). Each is filtered on its own folders plus the root files it depends on, and runs lint and tests.
 `e2e.yml` runs the end-to-end pipeline test above on every change to `services/**`, `ml/**` or `infra/**`.
+To save runner minutes, these workflows run on pull requests only, not again on `main` after a merge. Run logs
+and artifacts are kept for one day.
 
 ## Pull requests
 

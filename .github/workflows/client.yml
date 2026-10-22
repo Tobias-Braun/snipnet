@@ -1,11 +1,6 @@
 name: client
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - apps/client/**
-      - .github/workflows/client.yml
   pull_request:
     paths:
       - apps/client/**
@@ -21,6 +16,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/client
